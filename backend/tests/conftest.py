@@ -5,9 +5,8 @@ Assumptions:
 - Tests run against a real PostgreSQL instance (not mocked).
 - The test DB URL is provided via TEST_DATABASE_URL env var; falls back to the
   default DATABASE_URL with the database name suffixed by "_test".
-- Each test function gets a clean DB session that is rolled back after the test.
-  Full table truncation between test modules is handled by the session-scoped
-  `reset_db` fixture (added in P1 once tables exist).
+- Each test function gets a clean DB session that is rolled back after the test,
+  providing isolation without needing to truncate tables between tests.
 
 Usage:
     pytest tests/
@@ -15,7 +14,6 @@ Usage:
 
 import os
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -23,6 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from config import get_settings
 from database import Base, get_db
 from main import app
+
+# ── Import all models so Base.metadata knows about them ──────
+from auth.models import OtpVerification, RefreshToken  # noqa: F401
+from users.models import User  # noqa: F401
 
 settings = get_settings()
 
