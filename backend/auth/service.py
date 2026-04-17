@@ -19,9 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.models import OtpVerification, RefreshToken
-from common.exceptions import ConflictError, UnauthorizedError
+from common.exceptions import ConflictError, TooManyRequestsError, UnauthorizedError
 from config import get_settings
 from users.models import User
+
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -95,6 +98,21 @@ async def request_otp(db: AsyncSession, phone_number: str) -> str | None:
         None in production mode (OTP should be sent via SMS instead).
     """
     settings = get_settings()
+    now = _now()
+
+    # Abuse guard: block if an unused, non-expired OTP was created within the cooldown window
+    recent = await db.execute(
+        select(OtpVerification)
+        .where(
+            OtpVerification.phone_number == phone_number,
+            OtpVerification.used_at.is_(None),
+            OtpVerification.expires_at > now,
+            OtpVerification.created_at > now - timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS),
+        )
+        .limit(1)
+    )
+    if recent.scalar_one_or_none():
+        raise TooManyRequestsError("Please wait before requesting another OTP")
 
     if settings.otp_mock_mode:
         otp = "123456"
@@ -106,6 +124,7 @@ async def request_otp(db: AsyncSession, phone_number: str) -> str | None:
         phone_number=phone_number,
         otp_hash=otp_hash,
         expires_at=_now() + timedelta(minutes=settings.otp_ttl_minutes),
+        attempt_count=0,
     )
     db.add(record)
     await db.flush()
@@ -140,6 +159,12 @@ async def verify_otp(
     if record is None:
         raise UnauthorizedError("OTP not found, expired, or already used")
 
+    # Brute-force guard: already maxed out
+    if record.attempt_count >= OTP_MAX_ATTEMPTS:
+        record.used_at = now
+        await db.flush()
+        raise TooManyRequestsError("Too many attempts. Request a new OTP.")
+
     # Validate
     if settings.otp_mock_mode:
         valid = otp == "123456"
@@ -147,6 +172,10 @@ async def verify_otp(
         valid = pwd_context.verify(otp, record.otp_hash)
 
     if not valid:
+        record.attempt_count += 1
+        if record.attempt_count >= OTP_MAX_ATTEMPTS:
+            record.used_at = now
+        await db.flush()
         raise UnauthorizedError("Invalid OTP")
 
     # Mark as used
