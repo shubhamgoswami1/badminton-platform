@@ -52,12 +52,14 @@ def create_app() -> FastAPI:
     from users.router import router as users_router
     from tournaments.router import router as tournaments_router
     from scores.router import router as scores_router
+    from training.router import router as training_router
 
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(tournaments_router, prefix="/api/v1")
     app.include_router(scores_router, prefix="/api/v1")
+    app.include_router(training_router, prefix="/api/v1")
 
     return app
 

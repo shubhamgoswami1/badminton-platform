@@ -26,6 +26,7 @@ from main import app
 from auth.models import OtpVerification, RefreshToken  # noqa: F401
 from users.models import PlayerProfile, User  # noqa: F401
 from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant  # noqa: F401
+from training.models import TrainingGoal, TrainingLog  # noqa: F401
 
 settings = get_settings()
 
