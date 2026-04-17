@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from common.exceptions import AppError
+from common.middleware import RequestIdMiddleware
 from common.response import error
 from config import get_settings
 from logging_config import configure_logging
@@ -22,7 +23,8 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.is_development else None,
     )
 
-    # ── CORS ─────────────────────────────────────────────────
+    # ── Middleware ────────────────────────────────────────────
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
