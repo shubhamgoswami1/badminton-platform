@@ -48,11 +48,12 @@ def create_app() -> FastAPI:
         )
 
     # ── Routers ───────────────────────────────────────────────
-    app.include_router(health_router, prefix="/api/v1")
+    from auth.router import router as auth_router
 
-    # Business module routers are registered here as they are implemented:
-    # from auth.router import router as auth_router
-    # app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(health_router, prefix="/api/v1")
+    app.include_router(auth_router, prefix="/api/v1")
+
+    # Routers registered here as each phase is implemented:
     # from users.router import router as users_router
     # app.include_router(users_router, prefix="/api/v1")
 
