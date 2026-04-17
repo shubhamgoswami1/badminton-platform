@@ -1,0 +1,51 @@
+name: badminton_platform
+description: Badminton Platform — tournament management, training logs, and player discovery.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.2.7
+
+  # Network
+  dio: ^5.4.3+1
+
+  # Secure storage
+  flutter_secure_storage: ^9.0.0
+
+  # Local storage
+  shared_preferences: ^2.2.3
+
+  # Data classes
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Connectivity
+  connectivity_plus: ^6.0.3
+
+  # Misc UI
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  # Code generation
+  build_runner: ^2.4.11
+  riverpod_generator: ^2.4.3
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+
+flutter:
+  uses-material-design: true
