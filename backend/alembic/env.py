@@ -10,14 +10,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # Add each new models module here as it is created.
 from database import Base  # noqa: F401 — registers Base.metadata
 
-# P1
+# All domain models registered here for Alembic autogenerate
 from auth.models import OtpVerification, RefreshToken  # noqa: F401
-from users.models import User  # noqa: F401
-
-# Uncomment as each phase is implemented:
-# from tournaments.models import *  # noqa: F401, F403
-# from training.models import *  # noqa: F401, F403
-# from discovery.models import *  # noqa: F401, F403
+from users.models import PlayerProfile, User  # noqa: F401
+from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant  # noqa: F401
+from training.models import TrainingGoal, TrainingLog  # noqa: F401
+from discovery.models import Venue  # noqa: F401
 
 from config import get_settings
 

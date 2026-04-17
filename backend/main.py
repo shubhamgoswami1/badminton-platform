@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from common.exceptions import AppError
+from common.middleware import RequestIdMiddleware
 from common.response import error
 from config import get_settings
 from logging_config import configure_logging
@@ -22,7 +23,8 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.is_development else None,
     )
 
-    # ── CORS ─────────────────────────────────────────────────
+    # ── Middleware ────────────────────────────────────────────
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -49,13 +51,19 @@ def create_app() -> FastAPI:
 
     # ── Routers ───────────────────────────────────────────────
     from auth.router import router as auth_router
+    from users.router import router as users_router
+    from tournaments.router import router as tournaments_router
+    from scores.router import router as scores_router
+    from training.router import router as training_router
+    from discovery.router import router as discovery_router
 
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
-
-    # Routers registered here as each phase is implemented:
-    # from users.router import router as users_router
-    # app.include_router(users_router, prefix="/api/v1")
+    app.include_router(users_router, prefix="/api/v1")
+    app.include_router(tournaments_router, prefix="/api/v1")
+    app.include_router(scores_router, prefix="/api/v1")
+    app.include_router(training_router, prefix="/api/v1")
+    app.include_router(discovery_router, prefix="/api/v1")
 
     return app
 

@@ -13,8 +13,11 @@ router = APIRouter(tags=["health"])
 async def get_health(
     _current_user: Annotated[object, Depends(get_current_user)],
 ) -> dict:
-    """
-    Liveness check. Requires a valid Bearer token.
-    Used in P1 tests to verify get_current_user resolves correctly.
-    """
+    """Authenticated liveness check — used in auth tests to verify get_current_user."""
+    return ok({"status": "ok"})
+
+
+@router.get("/health/live", response_class=JSONResponse, status_code=200)
+async def get_health_live() -> dict:
+    """Unauthenticated liveness probe — safe for Docker HEALTHCHECK and load balancers."""
     return ok({"status": "ok"})
