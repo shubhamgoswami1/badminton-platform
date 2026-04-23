@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/auth/screens/otp_screen.dart';
+import '../../features/auth/screens/phone_entry_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/welcome_screen.dart';
 import '../../features/home/screens/home_screen.dart';
@@ -15,6 +17,8 @@ import 'shell_scaffold.dart';
 abstract final class AppRoutes {
   static const splash = '/';
   static const welcome = '/welcome';
+  static const phoneEntry = '/phone';
+  static const otp = '/otp';
   static const home = '/home';
   static const tournaments = '/tournaments';
   static const matches = '/matches';
@@ -29,14 +33,18 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: AppRoutes.splash,
     redirect: (context, state) async {
       final isLoggedIn = await tokenStorage.isLoggedIn();
-      final isSplash = state.matchedLocation == AppRoutes.splash;
-      final isWelcome = state.matchedLocation == AppRoutes.welcome;
+      final loc = state.matchedLocation;
 
-      // Let splash handle its own redirect after init
-      if (isSplash) return null;
+      // Let splash handle its own redirect.
+      if (loc == AppRoutes.splash) return null;
 
-      if (!isLoggedIn && !isWelcome) return AppRoutes.welcome;
-      if (isLoggedIn && isWelcome) return AppRoutes.home;
+      // Auth screens are always accessible when logged out.
+      final isAuthScreen = loc == AppRoutes.welcome ||
+          loc == AppRoutes.phoneEntry ||
+          loc == AppRoutes.otp;
+
+      if (!isLoggedIn && !isAuthScreen) return AppRoutes.welcome;
+      if (isLoggedIn && isAuthScreen) return AppRoutes.home;
       return null;
     },
     routes: [
@@ -47,6 +55,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.welcome,
         builder: (_, __) => const WelcomeScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.phoneEntry,
+        builder: (_, __) => const PhoneEntryScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.otp,
+        builder: (context, state) {
+          final phone = state.extra as String? ?? '';
+          return OtpScreen(phoneNumber: phone);
+        },
       ),
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),

@@ -78,11 +78,7 @@ class WelcomeScreen extends StatelessWidget {
 
               AppButton(
                 label: 'Continue with Phone',
-                onPressed: () {
-                  // TODO(P1): navigate to phone entry screen
-                  // For now, bypass auth in dev by going straight to home
-                  context.go(AppRoutes.home);
-                },
+                onPressed: () => context.push(AppRoutes.phoneEntry),
                 icon: Icons.phone_android,
               ),
 

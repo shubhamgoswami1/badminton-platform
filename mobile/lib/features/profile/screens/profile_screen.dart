@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../auth/providers/auth_provider.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -106,9 +108,9 @@ class ProfileScreen extends StatelessWidget {
               'Log out',
               style: theme.textTheme.bodyLarge?.copyWith(color: AppColors.error),
             ),
-            onTap: () {
-              // TODO(P1): call auth provider logout, then:
-              context.go(AppRoutes.welcome);
+            onTap: () async {
+              await ref.read(authProvider.notifier).logout();
+              if (context.mounted) context.go(AppRoutes.welcome);
             },
           ),
           const SizedBox(height: 24),
