@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/router/app_router.dart';
-import '../../../core/storage/token_storage.dart';
 import '../../../core/theme/app_colors.dart';
+import '../providers/auth_provider.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -23,18 +23,22 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 700),
     );
     _fadeIn = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
     _controller.forward();
-    _navigate();
+    _init();
   }
 
-  Future<void> _navigate() async {
-    await Future.delayed(const Duration(milliseconds: 1400));
+  Future<void> _init() async {
+    // Show splash for at least 1.2 s while we check the session.
+    final results = await Future.wait([
+      ref.read(authProvider.notifier).restoreSession(),
+      Future.delayed(const Duration(milliseconds: 1200)),
+    ]);
     if (!mounted) return;
-    final isLoggedIn = await ref.read(tokenStorageProvider).isLoggedIn();
-    if (!mounted) return;
+
+    final isLoggedIn = results[0] as bool;
     context.go(isLoggedIn ? AppRoutes.home : AppRoutes.welcome);
   }
 

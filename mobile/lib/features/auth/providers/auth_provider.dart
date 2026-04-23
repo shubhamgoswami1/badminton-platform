@@ -1,7 +1,8 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/storage/token_storage.dart';
-import '../data/auth_models.dart';
 import '../data/auth_repository.dart';
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -12,12 +13,18 @@ class AuthState {
     this.userId,
     this.isLoading = false,
     this.error,
+    this.isFirstLogin = false,
   });
 
   final String? accessToken;
   final String? userId;
   final bool isLoading;
   final String? error;
+
+  /// True immediately after OTP verify when this is a brand-new account.
+  /// Set to false once the user has completed profile onboarding (P2).
+  /// Currently always false — will be populated in P2 via GET /users/me.
+  final bool isFirstLogin;
 
   bool get isLoggedIn => accessToken != null;
 
@@ -26,14 +33,16 @@ class AuthState {
     String? userId,
     bool? isLoading,
     String? error,
+    bool? isFirstLogin,
     bool clearError = false,
-    bool clearTokens = false,
+    bool clearSession = false,
   }) {
     return AuthState(
-      accessToken: clearTokens ? null : (accessToken ?? this.accessToken),
-      userId: clearTokens ? null : (userId ?? this.userId),
+      accessToken: clearSession ? null : (accessToken ?? this.accessToken),
+      userId: clearSession ? null : (userId ?? this.userId),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      isFirstLogin: clearSession ? false : (isFirstLogin ?? this.isFirstLogin),
     );
   }
 }
@@ -51,7 +60,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _repository;
   final TokenStorage _storage;
 
-  // Called on app start — restore session from secure storage.
+  /// Called on app start — restores session from secure storage into state.
+  /// Returns true if a stored token was found.
   Future<bool> restoreSession() async {
     final token = await _storage.getAccessToken();
     if (token != null) {
@@ -61,71 +71,99 @@ class AuthNotifier extends StateNotifier<AuthState> {
     return false;
   }
 
+  /// Requests an OTP for [phoneNumber].
+  /// On success, navigating to the OTP screen is the caller's responsibility.
   Future<void> requestOtp(String phoneNumber) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       await _repository.requestOtp(phoneNumber);
       state = state.copyWith(isLoading: false);
-    } on Exception catch (e) {
-      state = state.copyWith(isLoading: false, error: _message(e));
+    } on DioException catch (e) {
+      final msg = _messageFromDio(e);
+      state = state.copyWith(isLoading: false, error: msg);
+      rethrow;
+    } on Exception catch (_) {
+      const msg = 'Something went wrong. Please try again.';
+      state = state.copyWith(isLoading: false, error: msg);
       rethrow;
     }
   }
 
-  Future<OtpVerifyResponse> verifyOtp({
+  /// Verifies [otp] for [phoneNumber], saves tokens to secure storage,
+  /// and updates auth state on success.
+  Future<void> verifyOtp({
     required String phoneNumber,
     required String otp,
   }) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final result = await _repository.verifyOtp(
+      final tokens = await _repository.verifyOtp(
         phoneNumber: phoneNumber,
         otp: otp,
       );
       await _storage.saveTokens(
-        accessToken: result.tokens.accessToken,
-        refreshToken: result.tokens.refreshToken,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
       );
+      // isFirstLogin will be determined in P2 via GET /users/me profile check.
       state = state.copyWith(
         isLoading: false,
-        accessToken: result.tokens.accessToken,
-        userId: result.user.id,
+        accessToken: tokens.accessToken,
       );
-      return result;
-    } on Exception catch (e) {
-      state = state.copyWith(isLoading: false, error: _message(e));
+    } on DioException catch (e) {
+      final msg = _messageFromDio(e);
+      state = state.copyWith(isLoading: false, error: msg);
+      rethrow;
+    } on Exception catch (_) {
+      const msg = 'Something went wrong. Please try again.';
+      state = state.copyWith(isLoading: false, error: msg);
       rethrow;
     }
   }
 
+  /// Clears tokens from storage and resets auth state.
+  /// Best-effort revoke on server — always clears locally.
   Future<void> logout() async {
     final refreshToken = await _storage.getRefreshToken();
     if (refreshToken != null) {
       try {
         await _repository.logout(refreshToken);
       } catch (_) {
-        // Best-effort — clear locally regardless.
+        // Intentional: clear locally even if server revoke fails.
       }
     }
     await _storage.clearTokens();
     state = const AuthState();
   }
 
+  /// Clears the current error from state (e.g. when user edits the phone field).
   void clearError() => state = state.copyWith(clearError: true);
 
-  String _message(Exception e) {
-    final msg = e.toString();
-    if (msg.contains('400')) return 'Invalid OTP. Please try again.';
-    if (msg.contains('429')) return 'Too many attempts. Please wait.';
-    if (msg.contains('404')) return 'Phone number not found.';
-    if (msg.contains('SocketException') || msg.contains('connection')) {
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  String _messageFromDio(DioException e) {
+    final status = e.response?.statusCode;
+    if (status == 400) return 'Invalid request. Check your input.';
+    if (status == 401) return 'Invalid OTP. Please try again.';
+    if (status == 429) return 'Too many attempts. Please wait before retrying.';
+    if (status == 404) return 'Phone number not recognised.';
+    if (status != null && status >= 500) return 'Server error. Please try again later.';
+
+    // Network-level errors
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout) {
+      return 'Connection timed out. Check your internet.';
+    }
+    if (e.type == DioExceptionType.connectionError) {
       return 'No internet connection.';
     }
+
     return 'Something went wrong. Please try again.';
   }
 }
 
-// ── Provider ───────────────────────────────────────────────────────────────
+// ── Providers ──────────────────────────────────────────────────────────────
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   return AuthNotifier(
@@ -134,7 +172,15 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   );
 });
 
-/// Convenience provider for just the access token string.
-final accessTokenProvider = Provider<String?>((ref) {
-  return ref.watch(authProvider).accessToken;
+/// Notifies go_router whenever auth state changes so redirect is re-evaluated.
+/// Used as `GoRouter(refreshListenable: ref.watch(authListenableProvider))`.
+final authListenableProvider = Provider<Listenable>((ref) {
+  final notifier = _AuthChangeNotifier();
+  ref.listen<AuthState>(authProvider, (_, __) => notifier.notify());
+  ref.onDispose(notifier.dispose);
+  return notifier;
 });
+
+class _AuthChangeNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
+}

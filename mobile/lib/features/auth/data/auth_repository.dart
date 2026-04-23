@@ -15,19 +15,21 @@ class AuthRepository {
   final Dio _dio;
 
   /// Requests a new OTP for [phoneNumber].
-  /// Returns the mock OTP in dev mode (when server echoes it).
+  /// Returns the mock OTP string in dev mode (server echoes it back).
+  /// Returns null in production mode (OTP is sent via SMS only).
   Future<String?> requestOtp(String phoneNumber) async {
     final response = await _dio.post(
       ApiEndpoints.otpRequest,
       data: {'phone_number': phoneNumber},
     );
     final data = unwrap(response);
-    // Backend returns `otp` field only in mock/dev mode.
     return data['otp'] as String?;
   }
 
-  /// Verifies [otp] for [phoneNumber] and returns tokens + user.
-  Future<OtpVerifyResponse> verifyOtp({
+  /// Verifies [otp] for [phoneNumber].
+  /// Returns [AuthTokens] on success.
+  /// Backend contract: {access_token, refresh_token, token_type} — no user object.
+  Future<AuthTokens> verifyOtp({
     required String phoneNumber,
     required String otp,
   }) async {
@@ -35,10 +37,10 @@ class AuthRepository {
       ApiEndpoints.otpVerify,
       data: {'phone_number': phoneNumber, 'otp': otp},
     );
-    return OtpVerifyResponse.fromJson(unwrap(response));
+    return AuthTokens.fromJson(unwrap(response));
   }
 
-  /// Refreshes the access token using [refreshToken].
+  /// Rotates the refresh token. Returns a new [AuthTokens] pair.
   Future<AuthTokens> refreshToken(String refreshToken) async {
     final response = await _dio.post(
       ApiEndpoints.tokenRefresh,
@@ -47,7 +49,7 @@ class AuthRepository {
     return AuthTokens.fromJson(unwrap(response));
   }
 
-  /// Revokes [refreshToken] on the server (logout).
+  /// Revokes [refreshToken] on the server (best-effort logout).
   Future<void> logout(String refreshToken) async {
     await _dio.post(
       ApiEndpoints.logout,

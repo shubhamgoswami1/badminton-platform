@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/otp_screen.dart';
 import '../../features/auth/screens/phone_entry_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
@@ -10,41 +11,45 @@ import '../../features/matches/screens/matches_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../../features/tournaments/screens/tournaments_screen.dart';
 import '../../features/training/screens/training_screen.dart';
-import '../storage/token_storage.dart';
 import 'shell_scaffold.dart';
 
-// Route paths
+// ── Route paths ────────────────────────────────────────────────────────────
+
 abstract final class AppRoutes {
-  static const splash = '/';
-  static const welcome = '/welcome';
-  static const phoneEntry = '/phone';
-  static const otp = '/otp';
-  static const home = '/home';
+  static const splash      = '/';
+  static const welcome     = '/welcome';
+  static const phoneEntry  = '/phone';
+  static const otp         = '/otp';
+  static const home        = '/home';
   static const tournaments = '/tournaments';
-  static const matches = '/matches';
-  static const training = '/training';
-  static const profile = '/profile';
+  static const matches     = '/matches';
+  static const training    = '/training';
+  static const profile     = '/profile';
 }
 
+// ── Router provider ────────────────────────────────────────────────────────
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final tokenStorage = ref.watch(tokenStorageProvider);
+  // refreshListenable causes go_router to re-evaluate redirect() whenever
+  // auth state changes (login, logout, token expiry force-logout, etc.).
+  final listenable = ref.watch(authListenableProvider);
 
   return GoRouter(
     initialLocation: AppRoutes.splash,
-    redirect: (context, state) async {
-      final isLoggedIn = await tokenStorage.isLoggedIn();
-      final loc = state.matchedLocation;
+    refreshListenable: listenable,
+    redirect: (context, state) {
+      final auth = ref.read(authProvider);
+      final loc  = state.matchedLocation;
 
-      // Let splash handle its own redirect.
+      // Splash manages its own navigation after session restore — leave it alone.
       if (loc == AppRoutes.splash) return null;
 
-      // Auth screens are always accessible when logged out.
       final isAuthScreen = loc == AppRoutes.welcome ||
           loc == AppRoutes.phoneEntry ||
           loc == AppRoutes.otp;
 
-      if (!isLoggedIn && !isAuthScreen) return AppRoutes.welcome;
-      if (isLoggedIn && isAuthScreen) return AppRoutes.home;
+      if (!auth.isLoggedIn && !isAuthScreen) return AppRoutes.welcome;
+      if (auth.isLoggedIn && isAuthScreen)  return AppRoutes.home;
       return null;
     },
     routes: [
