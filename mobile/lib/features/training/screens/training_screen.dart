@@ -50,7 +50,7 @@ class TrainingScreen extends StatelessWidget {
                       children: [
                         Text('This week', style: theme.textTheme.titleMedium),
                         const SizedBox(height: 12),
-                        Row(
+                        const Row(
                           children: [
                             Expanded(child: _WeekStat(label: 'Sessions', value: '0')),
                             Expanded(child: _WeekStat(label: 'Hours', value: '0')),
@@ -64,7 +64,7 @@ class TrainingScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 Text('Recent Sessions', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
-                EmptyState(
+                const EmptyState(
                   icon: Icons.fitness_center_outlined,
                   title: 'No sessions logged',
                   subtitle: 'Start tracking your training\nto see progress over time.',
@@ -73,7 +73,7 @@ class TrainingScreen extends StatelessWidget {
             ),
 
             // Goals tab
-            EmptyState(
+            const EmptyState(
               icon: Icons.flag_outlined,
               title: 'No goals set',
               subtitle: 'Set training goals to stay\nmotivated and focused.',

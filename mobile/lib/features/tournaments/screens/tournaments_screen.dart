@@ -30,17 +30,17 @@ class TournamentsScreen extends StatelessWidget {
       body: Column(
         children: [
           // Filter chips
-          SingleChildScrollView(
+          const SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
                 _FilterChip(label: 'All', selected: true),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 _FilterChip(label: 'Open'),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 _FilterChip(label: 'In Progress'),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 _FilterChip(label: 'My City'),
               ],
             ),

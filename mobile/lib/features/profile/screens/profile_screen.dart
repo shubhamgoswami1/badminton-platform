@@ -4,28 +4,88 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/avatar_widget.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../data/profile_models.dart';
+import '../providers/profile_provider.dart';
+import 'edit_profile_screen.dart';
 
-class ProfileScreen extends ConsumerWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Load profile whenever this screen is entered.
+    Future.microtask(() => ref.read(profileProvider.notifier).load());
+  }
+
+  Future<void> _openEdit(PlayerProfile profile) async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EditProfileScreen(existing: profile),
+      ),
+    );
+    // Refresh data if user saved changes.
+    if (result == true && mounted) {
+      await ref.read(profileProvider.notifier).load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final state = ref.watch(profileProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () {
-              // TODO(P2): navigate to edit profile screen
-            },
-          ),
+          if (state.profile != null)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit profile',
+              onPressed: () => _openEdit(state.profile!),
+            ),
         ],
       ),
-      body: ListView(
+      body: _buildBody(theme, state),
+    );
+  }
+
+  Widget _buildBody(ThemeData theme, ProfileState state) {
+    // Loading skeleton
+    if (state.isLoading && state.userWithProfile == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Error with no cached data
+    if (state.error != null && state.userWithProfile == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(state.error!, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () => ref.read(profileProvider.notifier).load(),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final profile = state.profile;
+
+    return RefreshIndicator(
+      onRefresh: () => ref.read(profileProvider.notifier).load(),
+      child: ListView(
         children: [
           // Avatar + name header
           Container(
@@ -33,24 +93,20 @@ class ProfileScreen extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(vertical: 32),
             child: Column(
               children: [
-                CircleAvatar(
+                AvatarWidget(
+                  initials: profile?.initials ?? '?',
                   radius: 44,
-                  backgroundColor: AppColors.primaryLight.withValues(alpha: 0.18),
-                  child: Text(
-                    '?',
-                    style: theme.textTheme.headlineLarge?.copyWith(
-                      color: AppColors.primary,
-                    ),
-                  ),
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Your Name',
+                  profile?.displayName ?? 'Your Name',
                   style: theme.textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Set up your profile',
+                  profile == null
+                      ? 'Tap edit to set up your profile'
+                      : _reliabilityLabel(profile.reliabilityScore),
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: AppColors.onSurfaceVariant,
                   ),
@@ -59,58 +115,76 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
 
-          const Divider(),
+          const Divider(height: 1),
 
           // Profile fields
           _ProfileTile(
             icon: Icons.location_city_outlined,
             label: 'City',
-            value: '–',
+            value: profile?.city ?? '–',
           ),
           _ProfileTile(
             icon: Icons.bar_chart_outlined,
             label: 'Skill Level',
-            value: '–',
+            value: profile?.skillLevel != null
+                ? _formatEnum(profile!.skillLevel!)
+                : '–',
           ),
           _ProfileTile(
             icon: Icons.sports_tennis,
             label: 'Play Style',
-            value: '–',
+            value: profile?.playStyle != null
+                ? _formatEnum(profile!.playStyle!)
+                : '–',
           ),
+          if (profile?.bio != null && profile!.bio!.isNotEmpty)
+            _ProfileTile(
+              icon: Icons.info_outline,
+              label: 'Bio',
+              value: profile.bio!,
+            ),
+          if (profile?.rating != null)
+            _ProfileTile(
+              icon: Icons.star_outline,
+              label: 'Rating',
+              value: profile!.rating!.toStringAsFixed(1),
+            ),
 
-          const Divider(),
+          const Divider(height: 1),
 
-          // Stats
+          // Stats row
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text('Career Stats', style: theme.textTheme.titleMedium),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(child: _StatTile(label: 'Tournaments', value: '0')),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(child: _StatTile(label: 'Matches Won', value: '0')),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(child: _StatTile(label: 'Win Rate', value: '–')),
               ],
             ),
           ),
 
           const SizedBox(height: 24),
-          const Divider(),
+          const Divider(height: 1),
 
           // Log out
           ListTile(
             leading: const Icon(Icons.logout, color: AppColors.error),
             title: Text(
               'Log out',
-              style: theme.textTheme.bodyLarge?.copyWith(color: AppColors.error),
+              style: theme.textTheme.bodyLarge
+                  ?.copyWith(color: AppColors.error),
             ),
             onTap: () async {
               await ref.read(authProvider.notifier).logout();
-              if (context.mounted) context.go(AppRoutes.welcome);
+              if (!mounted) return;
+              context.go(AppRoutes.welcome);
             },
           ),
           const SizedBox(height: 24),
@@ -118,10 +192,27 @@ class ProfileScreen extends ConsumerWidget {
       ),
     );
   }
+
+  String _reliabilityLabel(double score) {
+    if (score >= 4.5) return '⭐ Reliability: ${score.toStringAsFixed(1)}';
+    if (score >= 3.0) return 'Reliability: ${score.toStringAsFixed(1)}';
+    return '⚠️ Reliability: ${score.toStringAsFixed(1)}';
+  }
+
+  String _formatEnum(String raw) {
+    if (raw.isEmpty) return raw;
+    return raw[0].toUpperCase() + raw.substring(1).toLowerCase();
+  }
 }
 
+// ── Sub-widgets ───────────────────────────────────────────────────────────
+
 class _ProfileTile extends StatelessWidget {
-  const _ProfileTile({required this.icon, required this.label, required this.value});
+  const _ProfileTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   final IconData icon;
   final String label;
@@ -132,11 +223,14 @@ class _ProfileTile extends StatelessWidget {
     return ListTile(
       leading: Icon(icon, color: AppColors.primary),
       title: Text(label, style: Theme.of(context).textTheme.labelMedium),
-      trailing: Text(
-        value,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: AppColors.onSurfaceVariant,
-            ),
+      trailing: Flexible(
+        child: Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppColors.onSurfaceVariant,
+              ),
+          textAlign: TextAlign.end,
+        ),
       ),
     );
   }

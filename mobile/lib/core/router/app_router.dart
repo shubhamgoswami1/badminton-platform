@@ -8,6 +8,7 @@ import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/welcome_screen.dart';
 import '../../features/home/screens/home_screen.dart';
 import '../../features/matches/screens/matches_screen.dart';
+import '../../features/profile/screens/onboarding_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../../features/tournaments/screens/tournaments_screen.dart';
 import '../../features/training/screens/training_screen.dart';
@@ -20,6 +21,7 @@ abstract final class AppRoutes {
   static const welcome     = '/welcome';
   static const phoneEntry  = '/phone';
   static const otp         = '/otp';
+  static const onboarding  = '/onboarding';
   static const home        = '/home';
   static const tournaments = '/tournaments';
   static const matches     = '/matches';
@@ -31,7 +33,7 @@ abstract final class AppRoutes {
 
 final routerProvider = Provider<GoRouter>((ref) {
   // refreshListenable causes go_router to re-evaluate redirect() whenever
-  // auth state changes (login, logout, token expiry force-logout, etc.).
+  // auth state changes (login, logout, onboarding completion, etc.).
   final listenable = ref.watch(authListenableProvider);
 
   return GoRouter(
@@ -41,15 +43,35 @@ final routerProvider = Provider<GoRouter>((ref) {
       final auth = ref.read(authProvider);
       final loc  = state.matchedLocation;
 
-      // Splash manages its own navigation after session restore — leave it alone.
+      // Splash manages its own navigation — never redirect away from it.
       if (loc == AppRoutes.splash) return null;
 
       final isAuthScreen = loc == AppRoutes.welcome ||
           loc == AppRoutes.phoneEntry ||
           loc == AppRoutes.otp;
 
+      // Not logged in → auth screens only.
       if (!auth.isLoggedIn && !isAuthScreen) return AppRoutes.welcome;
-      if (auth.isLoggedIn && isAuthScreen)  return AppRoutes.home;
+
+      // Logged in + on an auth screen → go home (or onboarding if first login).
+      if (auth.isLoggedIn && isAuthScreen) {
+        return auth.isFirstLogin ? AppRoutes.onboarding : AppRoutes.home;
+      }
+
+      // Logged in + first login + not already on onboarding → force onboarding.
+      if (auth.isLoggedIn &&
+          auth.isFirstLogin &&
+          loc != AppRoutes.onboarding) {
+        return AppRoutes.onboarding;
+      }
+
+      // Logged in + onboarding done + still on onboarding page → push to home.
+      if (auth.isLoggedIn &&
+          !auth.isFirstLogin &&
+          loc == AppRoutes.onboarding) {
+        return AppRoutes.home;
+      }
+
       return null;
     },
     routes: [
@@ -71,6 +93,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           final phone = state.extra as String? ?? '';
           return OtpScreen(phoneNumber: phone);
         },
+      ),
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (_, __) => const OnboardingScreen(),
       ),
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),

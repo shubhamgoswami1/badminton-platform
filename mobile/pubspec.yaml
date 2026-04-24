@@ -33,6 +33,9 @@ dependencies:
   # Connectivity
   connectivity_plus: ^6.0.3
 
+  # Location
+  geolocator: ^13.0.1
+
   # Misc UI
   cupertino_icons: ^1.0.8
 

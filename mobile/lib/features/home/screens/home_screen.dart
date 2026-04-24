@@ -67,14 +67,14 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
 
           // Quick stats
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(child: _StatCard(label: 'Tournaments', value: '–', icon: Icons.emoji_events_outlined)),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(child: _StatCard(label: 'Matches', value: '–', icon: Icons.sports_outlined)),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(child: _StatCard(label: 'Training hrs', value: '–', icon: Icons.fitness_center_outlined)),
               ],
             ),
@@ -88,7 +88,7 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 4),
 
-          EmptyState(
+          const EmptyState(
             icon: Icons.sports_outlined,
             title: 'No upcoming matches',
             subtitle: 'Register for a tournament to get started.',
