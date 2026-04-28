@@ -19,6 +19,9 @@ abstract final class ApiEndpoints {
 
   // Tournaments
   static const String tournaments = '/tournaments';
+  static const String tournamentsNearby = '/tournaments/nearby';
+  static const String tournamentsMyHosted = '/tournaments/my-hosted';
+  static const String tournamentsMyJoined = '/tournaments/my-joined';
   static String tournament(String id) => '/tournaments/$id';
   static String tournamentStatus(String id) => '/tournaments/$id/status';
   static String participants(String id) => '/tournaments/$id/participants';
