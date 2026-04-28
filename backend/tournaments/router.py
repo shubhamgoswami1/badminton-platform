@@ -16,6 +16,7 @@ from tournaments.schemas import (
     SeedOrderRequest,
     StandingEntry,
     TournamentCreate,
+    TournamentNearbyResult,
     TournamentResponse,
     TournamentStatusTransitionRequest,
     TournamentUpdate,
@@ -23,6 +24,67 @@ from tournaments.schemas import (
 from users.models import User
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
+
+
+# ── Discovery endpoints (must be declared BEFORE /{tournament_id}) ─────────
+
+@router.get("/nearby", status_code=status.HTTP_200_OK)
+async def get_nearby_tournaments(
+    _current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[PageParams, Depends()],
+    lat: float = Query(..., ge=-90.0, le=90.0, description="Latitude of the search centre"),
+    lng: float = Query(..., ge=-180.0, le=180.0, description="Longitude of the search centre"),
+    radius_km: float = Query(50.0, gt=0.0, le=500.0, description="Search radius in km"),
+    status_filter: Optional[str] = Query(None, alias="status"),
+) -> dict:
+    """
+    Return upcoming tournaments whose venue GPS pin is within radius_km of the
+    given lat/lng.  Only tournaments that were created with a latitude+longitude
+    are returned.  Results include a `distance_km` field (haversine, rounded to
+    2 decimal places) and are ordered nearest-first.
+    """
+    rows, total = await svc.get_nearby_tournaments(
+        db, lat, lng, radius_km, params, status_filter=status_filter
+    )
+    pages = (total + params.page_size - 1) // params.page_size if total else 0
+    return ok({
+        "items": [TournamentNearbyResult.model_validate(r).model_dump() for r in rows],
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "pages": pages,
+    })
+
+
+@router.get("/my-hosted", status_code=status.HTTP_200_OK)
+async def get_my_hosted_tournaments(
+    params: Annotated[PageParams, Depends()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return all tournaments the authenticated user has created, newest first."""
+    items, total = await svc.get_my_hosted_tournaments(db, current_user.id, params)
+    return paginate(
+        [TournamentResponse.model_validate(t).model_dump() for t in items],
+        total,
+        params,
+    )
+
+
+@router.get("/my-joined", status_code=status.HTTP_200_OK)
+async def get_my_joined_tournaments(
+    params: Annotated[PageParams, Depends()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return tournaments the authenticated user has joined (REGISTERED status)."""
+    items, total = await svc.get_my_joined_tournaments(db, current_user.id, params)
+    return paginate(
+        [TournamentResponse.model_validate(t).model_dump() for t in items],
+        total,
+        params,
+    )
 
 
 # ── Tournament CRUD ───────────────────────────────────────────

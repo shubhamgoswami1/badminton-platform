@@ -1,9 +1,10 @@
+import sqlalchemy as sa
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, Float, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, TIMESTAMPTZ, UUID
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.models import TimestampMixin, UUIDPrimaryKeyMixin
@@ -17,7 +18,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     phone_number: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
 
 
 class PlayerProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -173,8 +173,9 @@ async def verify_otp(
 
     if not valid:
         record.attempt_count += 1
-        if record.attempt_count >= OTP_MAX_ATTEMPTS:
-            record.used_at = now
+        # Do NOT mark used_at here — keep the record findable so the next
+        # request hits the brute-force guard (attempt_count >= OTP_MAX_ATTEMPTS)
+        # and returns 429 instead of a confusing 401.
         await db.flush()
         raise UnauthorizedError("Invalid OTP")
 

@@ -1,7 +1,9 @@
 """
-Tournament service — covers P3 (CRUD), P4 (participants), P5/P7 (brackets), P6 (score integration).
+Tournament service — covers P3 (CRUD), P4 (participants), P5/P7 (brackets), P6 (score integration),
+and discovery (nearby, my-hosted, my-joined).
 """
 
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -37,11 +39,20 @@ def _now() -> datetime:
 async def create_tournament(
     db: AsyncSession, organiser_id: uuid.UUID, data: TournamentCreate
 ) -> Tournament:
+    # lat/lng must be provided together or not at all
+    has_lat = data.latitude is not None
+    has_lng = data.longitude is not None
+    if has_lat != has_lng:
+        from common.exceptions import ValidationError as VE
+        raise VE("latitude and longitude must be provided together")
+
     t = Tournament(
         organiser_id=organiser_id,
         title=data.title,
         description=data.description,
         city=data.city,
+        latitude=data.latitude,
+        longitude=data.longitude,
         format=data.format.value,
         match_format=data.match_format.value,
         play_type=data.play_type.value,
@@ -317,7 +328,9 @@ async def generate_bracket(
     else:
         matches = generate_round_robin_bracket(tournament_id, participant_ids)
 
-    for m in matches:
+    # Insert later rounds first so next_match_id FK references are already
+    # present when earlier-round rows are written.
+    for m in sorted(matches, key=lambda m: -m.round):
         db.add(m)
     await db.flush()
 
@@ -382,3 +395,146 @@ async def get_round_robin_standings(
                 stats[loser_id]["losses"] += 1
 
     return sorted(stats.values(), key=lambda x: x["points"], reverse=True)
+
+
+# ── Discovery (nearby / my-hosted / my-joined) ────────────────────────────
+
+
+# Statuses considered "upcoming" (not yet finished or cancelled).
+_UPCOMING_STATUSES = frozenset([
+    TournamentStatus.DRAFT.value,
+    TournamentStatus.REGISTRATION_OPEN.value,
+    TournamentStatus.REGISTRATION_CLOSED.value,
+    TournamentStatus.IN_PROGRESS.value,
+])
+
+
+async def get_my_hosted_tournaments(
+    db: AsyncSession,
+    organiser_id: uuid.UUID,
+    params: "PageParams",
+) -> tuple[list[Tournament], int]:
+    """Return tournaments created by organiser_id (non-deleted), newest first."""
+    q = (
+        select(Tournament)
+        .where(Tournament.organiser_id == organiser_id, Tournament.deleted_at.is_(None))
+    )
+    count_q = select(func.count()).select_from(q.subquery())
+    total: int = (await db.execute(count_q)).scalar_one()
+
+    q = q.order_by(Tournament.created_at.desc()).offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
+
+
+async def get_my_joined_tournaments(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    params: "PageParams",
+) -> tuple[list[Tournament], int]:
+    """Return non-deleted tournaments where user_id has a REGISTERED participant row."""
+    q = (
+        select(Tournament)
+        .join(
+            TournamentParticipant,
+            TournamentParticipant.tournament_id == Tournament.id,
+        )
+        .where(
+            TournamentParticipant.user_id == user_id,
+            TournamentParticipant.status == ParticipantStatus.REGISTERED.value,
+            Tournament.deleted_at.is_(None),
+        )
+    )
+    count_q = select(func.count()).select_from(q.subquery())
+    total: int = (await db.execute(count_q)).scalar_one()
+
+    q = q.order_by(Tournament.starts_at.asc().nulls_last(), Tournament.created_at.desc())
+    q = q.offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
+
+
+async def get_nearby_tournaments(
+    db: AsyncSession,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    params: "PageParams",
+    status_filter: str | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Return upcoming non-deleted tournaments within radius_km of (lat, lng).
+
+    Uses a bounding-box pre-filter (same approach as player search) for the DB
+    query, then computes exact haversine distance in Python and attaches it as
+    `distance_km`.  Only tournaments with GPS coords are returned.
+
+    Results are ordered by distance ASC.
+    """
+    lat_delta, lng_delta = _bounding_box_deltas(lat, radius_km)
+
+    # Base query: only tournaments with GPS coords, not deleted, upcoming
+    q = select(Tournament).where(
+        Tournament.deleted_at.is_(None),
+        Tournament.latitude.is_not(None),
+        Tournament.latitude.between(lat - lat_delta, lat + lat_delta),
+        Tournament.longitude.is_not(None),
+        Tournament.longitude.between(lng - lng_delta, lng + lng_delta),
+        Tournament.status.in_(list(_UPCOMING_STATUSES)),
+    )
+    if status_filter:
+        q = q.where(Tournament.status == status_filter)
+
+    all_in_box = list((await db.execute(q)).scalars().all())
+
+    # Exact haversine filter + distance annotation
+    rows: list[tuple[Tournament, float]] = []
+    for t in all_in_box:
+        d = _haversine_km(lat, lng, t.latitude, t.longitude)  # type: ignore[arg-type]
+        if d <= radius_km:
+            rows.append((t, d))
+
+    # Sort by distance
+    rows.sort(key=lambda x: x[1])
+
+    total = len(rows)
+
+    # Paginate in-memory (result set is bounded by bounding box → manageable)
+    page_rows = rows[params.offset: params.offset + params.limit]
+
+    result = []
+    for t, dist in page_rows:
+        d = t.__dict__.copy()
+        d.pop("_sa_instance_state", None)
+        d["distance_km"] = round(dist, 2)
+        result.append(d)
+
+    return result, total
+
+
+# ── Geo helpers ───────────────────────────────────────────────────────────
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return the great-circle distance in kilometres between two GPS points."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _bounding_box_deltas(lat: float, radius_km: float) -> tuple[float, float]:
+    """
+    Return (lat_delta_deg, lng_delta_deg) for a bounding box of radius_km.
+    Uses the same small-angle approximation as the player search.
+    """
+    lat_delta = radius_km / 111.0
+    cos_lat = math.cos(math.radians(lat))
+    lng_delta = radius_km / (111.0 * cos_lat) if cos_lat > 1e-6 else 180.0
+    return lat_delta, lng_delta
+
+
+# Forward reference needed for PageParams type hint (avoids circular import)
+from common.pagination import PageParams  # noqa: E402

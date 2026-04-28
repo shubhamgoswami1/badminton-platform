@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 """
 Tournament domain models — all phases in one file.
 
@@ -11,8 +12,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, Text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ, UUID
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, Numeric, Text
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.models import UUIDPrimaryKeyMixin, _now_utc
@@ -31,17 +32,20 @@ class Tournament(UUIDPrimaryKeyMixin, Base):
     venue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("venues.id"), nullable=True
     )
+    # Optional GPS pin for the tournament venue — enables radius-based discovery.
+    latitude: Mapped[Optional[float]] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(DOUBLE_PRECISION, nullable=True)
     format: Mapped[str] = mapped_column(Text, nullable=False)
     match_format: Mapped[str] = mapped_column(Text, nullable=False)
     play_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="DRAFT", index=True)
     max_participants: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    registration_deadline: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
-    starts_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    registration_deadline: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
+    starts_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
     bracket_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc)
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc, onupdate=_now_utc)
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
+    updated_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc, onupdate=_now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
 
 
 class TournamentParticipant(UUIDPrimaryKeyMixin, Base):
@@ -57,7 +61,7 @@ class TournamentParticipant(UUIDPrimaryKeyMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     seed_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    registered_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc)
+    registered_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="REGISTERED")
 
     __table_args__ = (
@@ -83,13 +87,13 @@ class Match(UUIDPrimaryKeyMixin, Base):
         UUID(as_uuid=True), ForeignKey("tournament_participants.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
-    scheduled_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
     next_match_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("matches.id"), nullable=True
     )
     winner_feeds_side: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 'A' or 'B'
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc)
+    created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
 
 
 class MatchScore(UUIDPrimaryKeyMixin, Base):
@@ -104,4 +108,4 @@ class MatchScore(UUIDPrimaryKeyMixin, Base):
     submitted_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    submitted_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc)
+    submitted_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)

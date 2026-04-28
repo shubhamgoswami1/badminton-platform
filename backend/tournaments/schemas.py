@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from common.enums import (
     MatchFormat,
@@ -20,10 +20,13 @@ class TournamentCreate(BaseModel):
     title: str
     description: Optional[str] = None
     city: Optional[str] = None
+    # Optional GPS pin for the tournament venue (enables /nearby discovery)
+    latitude: Optional[float] = Field(None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
     format: TournamentFormat
     match_format: MatchFormat
     play_type: PlayType
-    max_participants: Optional[int] = None
+    max_participants: Optional[int] = Field(None, ge=2, le=1024)
     registration_deadline: Optional[datetime] = None
     starts_at: Optional[datetime] = None
 
@@ -49,11 +52,14 @@ class TournamentResponse(BaseModel):
     title: str
     description: Optional[str] = None
     city: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     format: str
     match_format: str
     play_type: str
     status: str
     max_participants: Optional[int] = None
+    participant_count: Optional[int] = None  # populated by service where cheap
     registration_deadline: Optional[datetime] = None
     starts_at: Optional[datetime] = None
     bracket_generated: bool
@@ -61,6 +67,12 @@ class TournamentResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TournamentNearbyResult(TournamentResponse):
+    """TournamentResponse with an additional haversine distance field."""
+
+    distance_km: Optional[float] = None
 
 
 # ── Participants ──────────────────────────────────────────────

@@ -231,7 +231,7 @@ async def test_register_doubles_with_partner(client: AsyncClient, db_session: As
     # Find partner user_id by logging in and getting profile
     p2_tokens = await _do_full_login(client, PHONE_P2)
     me_r = await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {p2_tokens['access_token']}"})
-    partner_user_id = me_r.json()["data"]["id"]
+    partner_user_id = me_r.json()["data"]["user"]["id"]
 
     r = await _register(client, tid, p1["access_token"], partner_user_id=partner_user_id)
     assert r.status_code == 201

@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 """
 Shared SQLAlchemy column mixins.
 
@@ -9,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import func, text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -32,13 +33,13 @@ class TimestampMixin:
     """created_at / updated_at columns, always in UTC."""
 
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ,
+        sa.TIMESTAMP(timezone=True),
         nullable=False,
         default=_now_utc,
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ,
+        sa.TIMESTAMP(timezone=True),
         nullable=False,
         default=_now_utc,
         server_default=func.now(),
