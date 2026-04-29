@@ -1,12 +1,13 @@
-import sqlalchemy as sa
 """
 Tournament domain models — all phases in one file.
 
 P3: Tournament
-P4: TournamentParticipant
+P4: TournamentParticipant, Team (doubles scaffold)
 P5: Match
 P6: MatchScore
 """
+
+import sqlalchemy as sa
 
 import uuid
 from datetime import datetime
@@ -94,6 +95,34 @@ class Match(UUIDPrimaryKeyMixin, Base):
     )
     winner_feeds_side: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 'A' or 'B'
     created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
+
+
+class Team(UUIDPrimaryKeyMixin, Base):
+    """
+    A doubles team — pairs two TournamentParticipants inside a tournament.
+    participant_b_id is nullable so a team can be created before the partner
+    registers (or for mixed-doubles where the partner is registered separately).
+    """
+
+    __tablename__ = "teams"
+
+    tournament_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tournaments.id"), nullable=False, index=True
+    )
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    participant_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tournament_participants.id"),
+        nullable=False,
+    )
+    participant_b_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tournament_participants.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc
+    )
 
 
 class MatchScore(UUIDPrimaryKeyMixin, Base):

@@ -15,6 +15,8 @@ from tournaments.schemas import (
     ParticipantResponse,
     SeedOrderRequest,
     StandingEntry,
+    TeamCreateRequest,
+    TeamResponse,
     TournamentCreate,
     TournamentNearbyResult,
     TournamentResponse,
@@ -202,6 +204,51 @@ async def set_seed_order(
     await svc.set_seed_order(db, tournament_id, current_user.id, body.ordered_participant_ids)
     items = await svc.list_participants(db, tournament_id)
     return ok([ParticipantResponse.model_validate(p).model_dump() for p in items])
+
+
+# ── Start tournament ──────────────────────────────────────────
+
+@router.post("/{tournament_id}/start", status_code=status.HTTP_200_OK)
+async def start_tournament(
+    tournament_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    One-shot endpoint to start a tournament.
+
+    - Organiser only.
+    - Allowed from REGISTRATION_OPEN (auto-closes) or REGISTRATION_CLOSED.
+    - Requires ≥ 4 registered participants.
+    - Generates bracket and transitions status to IN_PROGRESS.
+    """
+    t = await svc.start_tournament(db, tournament_id, current_user.id)
+    return ok(TournamentResponse.model_validate(t).model_dump())
+
+
+# ── Teams (doubles scaffold) ──────────────────────────────────
+
+@router.post("/{tournament_id}/teams", status_code=status.HTTP_201_CREATED)
+async def create_team(
+    tournament_id: uuid.UUID,
+    body: TeamCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Organiser creates a doubles team pairing two participants."""
+    team = await svc.create_team(db, tournament_id, current_user.id, body)
+    return ok(TeamResponse.model_validate(team).model_dump())
+
+
+@router.get("/{tournament_id}/teams", status_code=status.HTTP_200_OK)
+async def list_teams(
+    tournament_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """List all teams in a tournament."""
+    teams = await svc.list_teams(db, tournament_id)
+    return ok([TeamResponse.model_validate(team).model_dump() for team in teams])
 
 
 # ── Bracket ───────────────────────────────────────────────────

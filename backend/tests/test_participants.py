@@ -255,3 +255,51 @@ async def test_list_participants_unauthenticated(client: AsyncClient, db_session
 
     r = await client.get(f"/api/v1/tournaments/{tid}/participants")
     assert r.status_code == 401
+
+
+# ── Host-removal tests ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_host_can_remove_participant(client: AsyncClient, db_session: AsyncSession):
+    """Organiser can remove any participant before the tournament starts."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    tid = await _setup_open_tournament(client, org["access_token"])
+
+    reg = await _register(client, tid, p1["access_token"])
+    pid = reg.json()["data"]["id"]
+
+    r = await client.delete(
+        f"/api/v1/tournaments/{tid}/participants/{pid}",
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    assert r.status_code == 200
+
+    # Participant should now be WITHDRAWN
+    list_r = await client.get(
+        f"/api/v1/tournaments/{tid}/participants",
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    items = list_r.json()["data"]
+    participant = next((p for p in items if p["id"] == pid), None)
+    assert participant is not None
+    assert participant["status"] == "WITHDRAWN"
+
+
+@pytest.mark.asyncio
+async def test_third_party_cannot_remove_participant(client: AsyncClient, db_session: AsyncSession):
+    """A user who is neither the participant nor the organiser gets 403."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    p3 = await _do_full_login(client, PHONE_P3)
+    tid = await _setup_open_tournament(client, org["access_token"])
+
+    reg = await _register(client, tid, p1["access_token"])
+    pid = reg.json()["data"]["id"]
+
+    r = await client.delete(
+        f"/api/v1/tournaments/{tid}/participants/{pid}",
+        headers={"Authorization": f"Bearer {p3['access_token']}"},
+    )
+    assert r.status_code == 403

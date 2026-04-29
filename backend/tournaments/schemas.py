@@ -124,3 +124,22 @@ class StandingEntry(BaseModel):
     wins: int
     losses: int
     points: int
+
+
+# ── Teams (doubles scaffold) ──────────────────────────────────
+
+class TeamCreateRequest(BaseModel):
+    participant_a_id: uuid.UUID
+    participant_b_id: Optional[uuid.UUID] = None
+    name: Optional[str] = None
+
+
+class TeamResponse(BaseModel):
+    id: uuid.UUID
+    tournament_id: uuid.UUID
+    participant_a_id: uuid.UUID
+    participant_b_id: Optional[uuid.UUID] = None
+    name: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

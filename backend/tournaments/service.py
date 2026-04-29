@@ -20,9 +20,10 @@ from common.enums import (
 )
 from common.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from common.pagination import PageParams
-from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant
+from tournaments.models import Match, MatchScore, Team, Tournament, TournamentParticipant
 from tournaments.schemas import (
     ParticipantRegisterRequest,
+    TeamCreateRequest,
     TournamentCreate,
     TournamentUpdate,
 )
@@ -249,9 +250,16 @@ async def list_participants(
 async def withdraw_participant(
     db: AsyncSession, tournament_id: uuid.UUID, participant_id: uuid.UUID, user_id: uuid.UUID
 ) -> TournamentParticipant:
+    """
+    Remove a participant from a tournament.
+
+    Permission rules:
+    - A participant may withdraw their own registration at any time before the
+      tournament is IN_PROGRESS or COMPLETED.
+    - The organiser may remove any participant as long as the tournament has not
+      yet started (status not IN_PROGRESS or COMPLETED).
+    """
     t = await get_tournament(db, tournament_id)
-    if t.status in (TournamentStatus.IN_PROGRESS.value, TournamentStatus.COMPLETED.value):
-        raise ConflictError("Cannot withdraw after tournament has started")
 
     result = await db.execute(
         select(TournamentParticipant).where(
@@ -262,8 +270,22 @@ async def withdraw_participant(
     p = result.scalar_one_or_none()
     if p is None:
         raise NotFoundError("Participant not found")
-    if p.user_id != user_id:
+
+    is_self = p.user_id == user_id
+    is_organiser = t.organiser_id == user_id
+
+    if not is_self and not is_organiser:
         raise ForbiddenError("Can only withdraw your own registration")
+
+    already_started = t.status in (
+        TournamentStatus.IN_PROGRESS.value,
+        TournamentStatus.COMPLETED.value,
+    )
+    if already_started:
+        if is_organiser and not is_self:
+            raise ConflictError("Cannot remove a participant after the tournament has started")
+        if is_self:
+            raise ConflictError("Cannot withdraw after tournament has started")
 
     p.status = ParticipantStatus.WITHDRAWN.value
     await db.flush()
@@ -297,6 +319,113 @@ async def set_seed_order(
 
     await db.flush()
     return list(participants.values())
+
+
+# ── Tournament start (P4+) ───────────────────────────────────
+
+
+async def start_tournament(
+    db: AsyncSession, tournament_id: uuid.UUID, organiser_id: uuid.UUID
+) -> Tournament:
+    """
+    One-shot "start tournament" action.
+
+    - Organiser only.
+    - Tournament must be in REGISTRATION_OPEN or REGISTRATION_CLOSED.
+    - At least 4 registered participants required.
+    - If still REGISTRATION_OPEN, registration is automatically closed first.
+    - Generates the bracket and transitions status to IN_PROGRESS.
+    """
+    t = await get_tournament(db, tournament_id)
+
+    if t.organiser_id != organiser_id:
+        raise ForbiddenError("Only the organiser can start the tournament")
+
+    allowed_statuses = (
+        TournamentStatus.REGISTRATION_OPEN.value,
+        TournamentStatus.REGISTRATION_CLOSED.value,
+    )
+    if t.status not in allowed_statuses:
+        raise ConflictError(
+            f"Tournament cannot be started from status '{t.status}'. "
+            "It must be in REGISTRATION_OPEN or REGISTRATION_CLOSED."
+        )
+
+    # Count registered participants before any status change.
+    count_result = await db.execute(
+        select(func.count(TournamentParticipant.id)).where(
+            TournamentParticipant.tournament_id == tournament_id,
+            TournamentParticipant.status == ParticipantStatus.REGISTERED.value,
+        )
+    )
+    participant_count = count_result.scalar_one()
+
+    if participant_count < 4:
+        raise ConflictError(
+            f"At least 4 registered participants are required to start the tournament "
+            f"(currently {participant_count})."
+        )
+
+    # Auto-close registration if still open.
+    if t.status == TournamentStatus.REGISTRATION_OPEN.value:
+        t.status = TournamentStatus.REGISTRATION_CLOSED.value
+        await db.flush()
+
+    # Delegate to generate_bracket which handles bracket creation and
+    # the final transition to IN_PROGRESS.
+    await generate_bracket(db, tournament_id, organiser_id)
+
+    return await get_tournament(db, tournament_id)
+
+
+# ── Teams (doubles scaffold) ──────────────────────────────────
+
+
+async def create_team(
+    db: AsyncSession,
+    tournament_id: uuid.UUID,
+    organiser_id: uuid.UUID,
+    data: "TeamCreateRequest",
+) -> Team:
+    """
+    Assign two participants as a doubles team.  Organiser only.
+    The tournament must not yet have started.
+    """
+    t = await get_tournament(db, tournament_id)
+    if t.organiser_id != organiser_id:
+        raise ForbiddenError("Only the organiser can assign teams")
+
+    if t.status in (TournamentStatus.IN_PROGRESS.value, TournamentStatus.COMPLETED.value):
+        raise ConflictError("Cannot assign teams after the tournament has started")
+
+    # Verify participant_a belongs to this tournament.
+    p_a = await db.get(TournamentParticipant, data.participant_a_id)
+    if p_a is None or p_a.tournament_id != tournament_id:
+        raise NotFoundError("Participant A not found in this tournament")
+
+    if data.participant_b_id is not None:
+        p_b = await db.get(TournamentParticipant, data.participant_b_id)
+        if p_b is None or p_b.tournament_id != tournament_id:
+            raise NotFoundError("Participant B not found in this tournament")
+
+    team = Team(
+        tournament_id=tournament_id,
+        name=data.name,
+        participant_a_id=data.participant_a_id,
+        participant_b_id=data.participant_b_id,
+    )
+    db.add(team)
+    await db.flush()
+    return team
+
+
+async def list_teams(db: AsyncSession, tournament_id: uuid.UUID) -> list[Team]:
+    result = await db.execute(
+        select(Team)
+        .where(Team.tournament_id == tournament_id)
+        .order_by(Team.created_at)
+    )
+    return list(result.scalars().all())
 
 
 # ── Bracket generation (P5 / P7) ─────────────────────────────
