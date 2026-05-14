@@ -109,6 +109,18 @@ async def list_goals(
     return paginate([TrainingGoalResponse.model_validate(g).model_dump() for g in items], total, params)
 
 
+@router.get("/training/goals/player/{user_id}", status_code=status.HTTP_200_OK)
+async def list_player_goals(
+    user_id: uuid.UUID,
+    params: Annotated[PageParams, Depends()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return another player's training goals. Authenticated users only."""
+    items, total = await svc.list_player_goals(db, user_id, params)
+    return paginate([TrainingGoalResponse.model_validate(g).model_dump() for g in items], total, params)
+
+
 @router.get("/training/goals/{goal_id}", status_code=status.HTTP_200_OK)
 async def get_goal(
     goal_id: uuid.UUID,

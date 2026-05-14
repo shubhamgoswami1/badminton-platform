@@ -144,6 +144,18 @@ async def update_goal(
     return goal
 
 
+async def list_player_goals(
+    db: AsyncSession, player_user_id: uuid.UUID, params: PageParams
+) -> tuple[list[TrainingGoal], int]:
+    """Return training goals for any player (public endpoint, auth required)."""
+    from sqlalchemy import func
+    q = select(TrainingGoal).where(TrainingGoal.user_id == player_user_id)
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    q = q.order_by(TrainingGoal.created_at.desc()).offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
+
+
 async def delete_goal(db: AsyncSession, goal_id: uuid.UUID, user_id: uuid.UUID) -> None:
     goal = await get_goal(db, goal_id, user_id)
     await db.delete(goal)
