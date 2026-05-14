@@ -51,6 +51,11 @@ abstract final class TournamentStatus {
       v;
 }
 
+abstract final class ParticipantStatus {
+  static const active = 'ACTIVE';
+  static const withdrawn = 'WITHDRAWN';
+}
+
 // ── Tournament ────────────────────────────────────────────────────────────
 
 class Tournament {
@@ -211,4 +216,76 @@ class CreateTournamentRequest {
     if (longitude != null) map['longitude'] = longitude;
     return map;
   }
+}
+
+// ── Participant ───────────────────────────────────────────────────────────
+
+class TournamentParticipant {
+  const TournamentParticipant({
+    required this.id,
+    required this.tournamentId,
+    required this.userId,
+    this.partnerUserId,
+    this.seedOrder,
+    required this.registeredAt,
+    required this.status,
+  });
+
+  factory TournamentParticipant.fromJson(Map<String, dynamic> json) =>
+      TournamentParticipant(
+        id: json['id'] as String,
+        tournamentId: json['tournament_id'] as String,
+        userId: json['user_id'] as String,
+        partnerUserId: json['partner_user_id'] as String?,
+        seedOrder: json['seed_order'] as int?,
+        registeredAt: json['registered_at'] as String,
+        status: json['status'] as String,
+      );
+
+  final String id;
+  final String tournamentId;
+  final String userId;
+  final String? partnerUserId;
+  final int? seedOrder;
+  final String registeredAt;
+  final String status;
+
+  bool get isActive => status == ParticipantStatus.active;
+
+  /// Short display identifier (first 8 chars of userId UUID).
+  String get shortId => userId.length >= 8 ? userId.substring(0, 8) : userId;
+}
+
+// ── Standing entry (round-robin) ──────────────────────────────────────────
+
+class StandingEntry {
+  const StandingEntry({
+    required this.participantId,
+    required this.userId,
+    required this.matchesPlayed,
+    required this.wins,
+    required this.losses,
+    required this.points,
+    required this.pointDiff,
+  });
+
+  factory StandingEntry.fromJson(Map<String, dynamic> json) => StandingEntry(
+        participantId: json['participant_id'] as String,
+        userId: json['user_id'] as String,
+        matchesPlayed: json['matches_played'] as int,
+        wins: json['wins'] as int,
+        losses: json['losses'] as int,
+        points: json['points'] as int,
+        pointDiff: json['point_diff'] as int,
+      );
+
+  final String participantId;
+  final String userId;
+  final int matchesPlayed;
+  final int wins;
+  final int losses;
+  final int points;
+  final int pointDiff;
+
+  String get shortId => userId.length >= 8 ? userId.substring(0, 8) : userId;
 }

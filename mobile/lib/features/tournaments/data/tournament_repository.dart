@@ -70,6 +70,43 @@ class TournamentRepository {
       data: body,
     );
   }
+
+  // ── Participants (host) ───────────────────────────────────────────────
+
+  Future<List<TournamentParticipant>> getParticipants(
+      String tournamentId) async {
+    final response =
+        await _dio.get(ApiEndpoints.participants(tournamentId));
+    return unwrapList(response)
+        .map((e) =>
+            TournamentParticipant.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> removeParticipant(
+      String tournamentId, String participantId) async {
+    await _dio.delete(ApiEndpoints.participant(tournamentId, participantId));
+  }
+
+  // ── Start tournament ──────────────────────────────────────────────────
+
+  Future<Tournament> startTournament(String tournamentId) async {
+    final response =
+        await _dio.post(ApiEndpoints.startTournament(tournamentId));
+    return Tournament.fromJson(unwrap(response));
+  }
+
+  // ── Standings (round-robin only) ──────────────────────────────────────
+
+  /// Returns standings for a round-robin tournament.
+  /// Throws a [DioException] with status 409 for knockout tournaments.
+  Future<List<StandingEntry>> getStandings(String tournamentId) async {
+    final response =
+        await _dio.get(ApiEndpoints.standings(tournamentId));
+    return unwrapList(response)
+        .map((e) => StandingEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 }
 
 final tournamentRepositoryProvider = Provider<TournamentRepository>((ref) {
