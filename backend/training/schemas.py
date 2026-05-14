@@ -4,12 +4,13 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-from common.enums import GoalStatus, SessionType
+from common.enums import GoalStatus, IntensityLevel, SessionType
 
 
 class TrainingLogCreate(BaseModel):
     session_type: SessionType
     duration_minutes: int
+    intensity: Optional[IntensityLevel] = None
     notes: Optional[str] = None
     logged_at: Optional[datetime] = None
 
@@ -24,6 +25,7 @@ class TrainingLogCreate(BaseModel):
 class TrainingLogUpdate(BaseModel):
     session_type: Optional[SessionType] = None
     duration_minutes: Optional[int] = None
+    intensity: Optional[IntensityLevel] = None
     notes: Optional[str] = None
     logged_at: Optional[datetime] = None
 
@@ -33,6 +35,7 @@ class TrainingLogResponse(BaseModel):
     user_id: uuid.UUID
     session_type: str
     duration_minutes: int
+    intensity: Optional[str] = None
     notes: Optional[str] = None
     logged_at: datetime
     created_at: datetime

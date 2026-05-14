@@ -44,6 +44,18 @@ async def list_logs(
     return paginate([TrainingLogResponse.model_validate(l).model_dump() for l in items], total, params)
 
 
+@router.get("/training/logs/player/{user_id}", status_code=status.HTTP_200_OK)
+async def list_player_logs(
+    user_id: uuid.UUID,
+    params: Annotated[PageParams, Depends()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return another player's training logs. Authenticated users only."""
+    items, total = await svc.list_player_logs(db, user_id, params)
+    return paginate([TrainingLogResponse.model_validate(l).model_dump() for l in items], total, params)
+
+
 @router.get("/training/logs/{log_id}", status_code=status.HTTP_200_OK)
 async def get_log(
     log_id: uuid.UUID,

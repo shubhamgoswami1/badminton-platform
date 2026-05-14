@@ -20,6 +20,7 @@ class TrainingLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     session_type: Mapped[str] = mapped_column(Text, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    intensity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     logged_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=_now_utc)
 
