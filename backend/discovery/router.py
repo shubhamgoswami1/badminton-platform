@@ -8,7 +8,7 @@ from common.dependencies import get_current_user
 from common.pagination import PageParams, paginate
 from common.response import ok
 from database import get_db
-from discovery.schemas import PlayerDiscoveryResponse, TournamentDiscoveryResponse, VenueCreate, VenueResponse
+from discovery.schemas import TournamentDiscoveryResponse, VenueCreate, VenueResponse
 from users.models import User
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -22,19 +22,21 @@ async def discover_players(
     city: Optional[str] = Query(None),
     skill_level: Optional[str] = Query(None),
     play_style: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Prefix search on display name"),
+    elo_min: Optional[float] = Query(None, description="Minimum Elo rating"),
+    elo_max: Optional[float] = Query(None, description="Maximum Elo rating"),
+    lat: Optional[float] = Query(None, description="Latitude for radius search"),
+    lng: Optional[float] = Query(None, description="Longitude for radius search"),
+    radius_km: Optional[float] = Query(None, description="Search radius in km"),
 ) -> dict:
-    items, total = await svc.discover_players(db, params, city=city, skill_level=skill_level, play_style=play_style)
-    return paginate(
-        [PlayerDiscoveryResponse(
-            user_id=p.user_id,
-            display_name=p.display_name,
-            city=p.city,
-            skill_level=p.skill_level,
-            play_style=p.play_style,
-            bio=p.bio,
-        ).model_dump() for p in items],
-        total, params,
+    items, total = await svc.discover_players(
+        db, params,
+        city=city, skill_level=skill_level, play_style=play_style,
+        q=q, elo_min=elo_min, elo_max=elo_max,
+        lat=lat, lng=lng, radius_km=radius_km,
     )
+    # Service already returns PlayerDiscoveryResponse instances.
+    return paginate([item.model_dump() for item in items], total, params)
 
 
 @router.get("/tournaments", status_code=status.HTTP_200_OK)
