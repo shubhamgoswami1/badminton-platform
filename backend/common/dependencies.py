@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.exceptions import UnauthorizedError
+from common.exceptions import ForbiddenError, UnauthorizedError
 from database import get_db
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -19,6 +19,7 @@ async def get_current_user(
     """
     Decode the Bearer JWT, load the user from DB, and return it.
     Raises UnauthorizedError (401) on any failure.
+    Raises ForbiddenError (403) if the user account is banned.
 
     Import note: auth.service and users.models are imported inside the function
     body to avoid a circular dependency between common/ and those modules.
@@ -44,4 +45,16 @@ async def get_current_user(
     if user is None:
         raise UnauthorizedError("User not found or deleted")
 
+    if user.is_banned:
+        raise ForbiddenError("Account suspended")
+
     return user
+
+
+async def get_current_admin(
+    current_user: Annotated["User", Depends(get_current_user)],  # type: ignore[name-defined]
+) -> "User":  # type: ignore[name-defined]  # noqa: F821
+    """Require the authenticated user to have admin privileges."""
+    if not current_user.is_admin:
+        raise ForbiddenError("Admin access required")
+    return current_user
