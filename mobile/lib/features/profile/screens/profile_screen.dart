@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/avatar_widget.dart';
+import '../../../core/widgets/error_view.dart';
+import '../../../core/widgets/loading_indicator.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../data/profile_models.dart';
 import '../providers/profile_provider.dart';
@@ -21,7 +23,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    // Load profile whenever this screen is entered.
     Future.microtask(() => ref.read(profileProvider.notifier).load());
   }
 
@@ -31,7 +32,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         builder: (_) => EditProfileScreen(existing: profile),
       ),
     );
-    // Refresh data if user saved changes.
     if (result == true && mounted) {
       await ref.read(profileProvider.notifier).load();
     }
@@ -39,7 +39,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final state = ref.watch(profileProvider);
 
     return Scaffold(
@@ -54,43 +53,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
         ],
       ),
-      body: _buildBody(theme, state),
+      body: _buildBody(state),
     );
   }
 
-  Widget _buildBody(ThemeData theme, ProfileState state) {
-    // Loading skeleton
+  Widget _buildBody(ProfileState state) {
     if (state.isLoading && state.userWithProfile == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const LoadingIndicator();
     }
 
-    // Error with no cached data
     if (state.error != null && state.userWithProfile == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(state.error!, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: () => ref.read(profileProvider.notifier).load(),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
+      return ErrorView(
+        message: state.error!,
+        onRetry: () => ref.read(profileProvider.notifier).load(),
       );
     }
 
     final profile = state.profile;
+    final theme = Theme.of(context);
 
     return RefreshIndicator(
       onRefresh: () => ref.read(profileProvider.notifier).load(),
       child: ListView(
         children: [
-          // Avatar + name header
+          // ── Avatar + name header ──────────────────────────────────────
           Container(
             color: AppColors.surface,
-            padding: const EdgeInsets.symmetric(vertical: 32),
+            padding: const EdgeInsets.fromLTRB(16, 28, 16, 24),
             child: Column(
               children: [
                 AvatarWidget(
@@ -102,22 +91,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   profile?.displayName ?? 'Your Name',
                   style: theme.textTheme.headlineSmall,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  profile == null
-                      ? 'Tap edit to set up your profile'
-                      : _reliabilityLabel(profile.reliabilityScore),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: AppColors.onSurfaceVariant,
+                const SizedBox(height: 6),
+                if (profile == null)
+                  Text(
+                    'Tap edit to set up your profile',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (profile.skillLevel != null) ...[
+                        _SkillChip(label: _formatEnum(profile.skillLevel!)),
+                        const SizedBox(width: 8),
+                      ],
+                      _ReliabilityBadge(score: profile.reliabilityScore),
+                    ],
                   ),
-                ),
               ],
             ),
           ),
 
-          const Divider(height: 1),
+          const Divider(),
 
-          // Profile fields
+          // ── Profile fields ────────────────────────────────────────────
           _ProfileTile(
             icon: Icons.location_city_outlined,
             label: 'City',
@@ -150,36 +149,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               value: profile!.rating!.toStringAsFixed(1),
             ),
 
-          const Divider(height: 1),
+          const Divider(),
 
-          // Stats row
+          // ── Career stats ──────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
             child: Text('Career Stats', style: theme.textTheme.titleMedium),
           ),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Expanded(child: _StatTile(label: 'Tournaments', value: '0')),
-                SizedBox(width: 12),
-                Expanded(child: _StatTile(label: 'Matches Won', value: '0')),
-                SizedBox(width: 12),
+                Expanded(child: _StatTile(label: 'Tournaments', value: '–')),
+                SizedBox(width: 10),
+                Expanded(child: _StatTile(label: 'Matches Won', value: '–')),
+                SizedBox(width: 10),
                 Expanded(child: _StatTile(label: 'Win Rate', value: '–')),
               ],
             ),
           ),
 
           const SizedBox(height: 24),
-          const Divider(height: 1),
+          const Divider(),
 
-          // Log out
+          // ── Actions ───────────────────────────────────────────────────
           ListTile(
             leading: const Icon(Icons.logout, color: AppColors.error),
             title: Text(
               'Log out',
-              style: theme.textTheme.bodyLarge
-                  ?.copyWith(color: AppColors.error),
+              style: theme.textTheme.bodyLarge?.copyWith(color: AppColors.error),
             ),
             onTap: () async {
               await ref.read(authProvider.notifier).logout();
@@ -193,19 +191,68 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  String _reliabilityLabel(double score) {
-    if (score >= 4.5) return '⭐ Reliability: ${score.toStringAsFixed(1)}';
-    if (score >= 3.0) return 'Reliability: ${score.toStringAsFixed(1)}';
-    return '⚠️ Reliability: ${score.toStringAsFixed(1)}';
-  }
-
   String _formatEnum(String raw) {
     if (raw.isEmpty) return raw;
     return raw[0].toUpperCase() + raw.substring(1).toLowerCase();
   }
 }
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────
+// ── Sub-widgets ───────────────────────────────────────────────────────────────
+
+class _SkillChip extends StatelessWidget {
+  const _SkillChip({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: AppColors.primary,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReliabilityBadge extends StatelessWidget {
+  const _ReliabilityBadge({required this.score});
+  final double score;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = score >= 4.5
+        ? AppColors.success
+        : score >= 3.0
+            ? AppColors.warning
+            : AppColors.error;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.verified_outlined, size: 13, color: color),
+        const SizedBox(width: 3),
+        Text(
+          score.toStringAsFixed(1),
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _ProfileTile extends StatelessWidget {
   const _ProfileTile({
@@ -221,16 +268,14 @@ class _ProfileTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Icon(icon, color: AppColors.primary),
+      leading: Icon(icon, color: AppColors.primary, size: 22),
       title: Text(label, style: Theme.of(context).textTheme.labelMedium),
-      trailing: Flexible(
-        child: Text(
-          value,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.onSurfaceVariant,
-              ),
-          textAlign: TextAlign.end,
-        ),
+      trailing: Text(
+        value,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: AppColors.onSurfaceVariant,
+            ),
+        textAlign: TextAlign.end,
       ),
     );
   }
@@ -247,7 +292,7 @@ class _StatTile extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
         child: Column(
           children: [
             Text(
@@ -262,6 +307,8 @@ class _StatTile extends StatelessWidget {
               label,
               style: Theme.of(context).textTheme.labelSmall,
               textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),

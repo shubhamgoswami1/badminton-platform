@@ -79,9 +79,6 @@ class _TournamentsScreenState extends ConsumerState<TournamentsScreen>
         bottom: TabBar(
           controller: _tabController,
           tabs: _tabLabels.map((t) => Tab(text: t)).toList(),
-          indicatorColor: AppColors.primary,
-          labelColor: AppColors.primary,
-          unselectedLabelColor: AppColors.onSurfaceVariant,
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
