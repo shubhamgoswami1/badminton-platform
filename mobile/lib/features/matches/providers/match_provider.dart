@@ -1,8 +1,10 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/match_models.dart';
 import '../data/match_repository.dart';
+import 'score_queue_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // All matches — backed by GET /matches/my
@@ -109,6 +111,7 @@ class MatchDetailState {
     this.error,
     this.updateError,
     this.completeError,
+    this.syncQueued = false,
   });
 
   final MatchDetail? matchDetail;
@@ -119,6 +122,9 @@ class MatchDetailState {
   final String? updateError;
   final String? completeError;
 
+  /// True when the last mutation was queued for offline sync.
+  final bool syncQueued;
+
   /// True whenever any mutating operation is in flight.
   bool get isBusy => isLoading || isUpdating || isCompleting;
 
@@ -126,8 +132,7 @@ class MatchDetailState {
   bool get isSubmitting => isUpdating || isCompleting;
 
   /// Backward-compat: score submitted iff the match is now done.
-  bool get submitted =>
-      matchDetail != null && matchDetail!.isDone;
+  bool get submitted => matchDetail != null && matchDetail!.isDone;
 
   /// Backward-compat: expose as MatchScore for callers that used matchScore.
   MatchScore? get matchScore => matchDetail == null
@@ -147,9 +152,11 @@ class MatchDetailState {
     String? error,
     String? updateError,
     String? completeError,
+    bool? syncQueued,
     bool clearError = false,
     bool clearUpdateError = false,
     bool clearCompleteError = false,
+    bool clearSyncQueued = false,
   }) =>
       MatchDetailState(
         matchDetail: matchDetail ?? this.matchDetail,
@@ -161,15 +168,18 @@ class MatchDetailState {
             clearUpdateError ? null : (updateError ?? this.updateError),
         completeError:
             clearCompleteError ? null : (completeError ?? this.completeError),
+        syncQueued:
+            clearSyncQueued ? false : (syncQueued ?? this.syncQueued),
       );
 }
 
 class MatchDetailNotifier extends StateNotifier<MatchDetailState> {
-  MatchDetailNotifier(this._repo, this._matchId)
+  MatchDetailNotifier(this._repo, this._matchId, this._queue)
       : super(const MatchDetailState());
 
   final MatchRepository _repo;
   final String _matchId;
+  final ScoreQueueNotifier _queue;
 
   /// Fetch full match detail from GET /matches/{id}.
   Future<void> loadDetail() async {
@@ -179,7 +189,6 @@ class MatchDetailNotifier extends StateNotifier<MatchDetailState> {
       final detail = await _repo.getMatchDetail(_matchId);
       state = state.copyWith(isLoading: false, matchDetail: detail);
     } catch (e) {
-      // Graceful degradation: 404 is unexpected here but handle it.
       if (e is DioException && e.response?.statusCode == 404) {
         state = state.copyWith(isLoading: false);
       } else {
@@ -195,19 +204,44 @@ class MatchDetailNotifier extends StateNotifier<MatchDetailState> {
   Future<void> loadScore() => loadDetail();
 
   /// Save intermediate scores without completing (PENDING → IN_PROGRESS).
-  /// Returns true on success.
+  ///
+  /// If offline: queues the operation locally and returns true.
+  /// If the server returns a SYNC_CONFLICT 409: surfaces the conflict message.
+  /// Returns true on success or successful queue.
   Future<bool> updateScore(UpdateScoreRequest request) async {
-    state = state.copyWith(isUpdating: true, clearUpdateError: true);
+    state = state.copyWith(
+      isUpdating: true,
+      clearUpdateError: true,
+      clearSyncQueued: true,
+    );
+
+    if (!await _isOnline()) {
+      await _queue.enqueueUpdateScore(
+        matchId: _matchId,
+        sets: request.sets,
+      );
+      state = state.copyWith(isUpdating: false, syncQueued: true);
+      return true;
+    }
+
     try {
       final detail = await _repo.updateScore(_matchId, request);
+      _queue.removeForMatch(_matchId);
       state = state.copyWith(isUpdating: false, matchDetail: detail);
       return true;
     } catch (e) {
+      final conflict = _extractSyncConflict(e);
+      if (conflict != null) {
+        state = state.copyWith(
+          isUpdating: false,
+          updateError: conflict,
+        );
+        return false;
+      }
       state = state.copyWith(
         isUpdating: false,
         updateError: _errorMessage(e, {
           403: 'You are not authorised to update this match.',
-          409: 'Match is already finished.',
         }),
       );
       return false;
@@ -215,20 +249,45 @@ class MatchDetailNotifier extends StateNotifier<MatchDetailState> {
   }
 
   /// Complete the match with a winner (IN_PROGRESS / PENDING → COMPLETED).
-  /// Optionally replaces stored scores.
-  /// Returns true on success.
+  ///
+  /// If offline: queues the operation locally and returns true.
+  /// Idempotent: same winner on already-COMPLETED returns 200.
+  /// Returns true on success or successful queue.
   Future<bool> completeMatch(CompleteMatchRequest request) async {
-    state = state.copyWith(isCompleting: true, clearCompleteError: true);
+    state = state.copyWith(
+      isCompleting: true,
+      clearCompleteError: true,
+      clearSyncQueued: true,
+    );
+
+    if (!await _isOnline()) {
+      await _queue.enqueueCompleteMatch(
+        matchId: _matchId,
+        winnerParticipantId: request.winnerParticipantId,
+        sets: request.sets,
+      );
+      state = state.copyWith(isCompleting: false, syncQueued: true);
+      return true;
+    }
+
     try {
       final detail = await _repo.completeMatch(_matchId, request);
+      _queue.removeForMatch(_matchId);
       state = state.copyWith(isCompleting: false, matchDetail: detail);
       return true;
     } catch (e) {
+      final conflict = _extractSyncConflict(e);
+      if (conflict != null) {
+        state = state.copyWith(
+          isCompleting: false,
+          completeError: conflict,
+        );
+        return false;
+      }
       state = state.copyWith(
         isCompleting: false,
         completeError: _errorMessage(e, {
           403: 'You are not authorised to complete this match.',
-          409: 'Match already has a result.',
           422: 'Invalid input. Check scores and winner.',
         }),
       );
@@ -263,6 +322,31 @@ class MatchDetailNotifier extends StateNotifier<MatchDetailState> {
   void clearSubmitError() => clearUpdateError();
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+Future<bool> _isOnline() async {
+  try {
+    final results = await Connectivity().checkConnectivity();
+    return results.any((r) => r != ConnectivityResult.none);
+  } catch (_) {
+    return true;
+  }
+}
+
+/// Returns a human-readable message if [e] is a SYNC_CONFLICT 409, else null.
+String? _extractSyncConflict(Object e) {
+  if (e is! DioException) return null;
+  if (e.response?.statusCode != 409) return null;
+  final body = e.response?.data as Map<String, dynamic>?;
+  final errObj = body?['error'] as Map<String, dynamic>?;
+  if (errObj?['code'] != 'SYNC_CONFLICT') return null;
+  final conflictType = errObj?['conflict_type'] as String?;
+  if (conflictType == 'MATCH_COMPLETED') {
+    return 'Match is already completed on the server.';
+  }
+  return 'Scores updated by another device. Refresh and try again.';
+}
+
 String _errorMessage(Object e, Map<int, String> codeMessages) {
   if (e is DioException) {
     final code = e.response?.statusCode;
@@ -275,6 +359,9 @@ String _errorMessage(Object e, Map<int, String> codeMessages) {
 
 final matchDetailProvider = StateNotifierProvider.family<MatchDetailNotifier,
     MatchDetailState, String>(
-  (ref, matchId) =>
-      MatchDetailNotifier(ref.watch(matchRepositoryProvider), matchId),
+  (ref, matchId) => MatchDetailNotifier(
+    ref.watch(matchRepositoryProvider),
+    matchId,
+    ref.watch(scoreQueueProvider.notifier),
+  ),
 );

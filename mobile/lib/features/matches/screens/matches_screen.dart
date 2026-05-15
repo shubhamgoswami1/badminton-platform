@@ -9,6 +9,7 @@ import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/loading_indicator.dart';
 import '../data/match_models.dart';
 import '../providers/match_provider.dart';
+import '../providers/score_queue_provider.dart';
 
 class MatchesScreen extends ConsumerStatefulWidget {
   const MatchesScreen({super.key});
@@ -71,30 +72,37 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               );
             }
 
-            return TabBarView(
+            return Column(
               children: [
-                _MatchList(
-                  matches: state.upcoming,
-                  emptyTitle: 'No upcoming matches',
-                  emptySubtitle:
-                      'Scheduled matches will appear here once\nyour tournaments are in progress.',
-                  onRefresh: () =>
-                      ref.read(allMatchesProvider.notifier).reload(),
-                ),
-                _MatchList(
-                  matches: state.ongoing,
-                  emptyTitle: 'No ongoing matches',
-                  emptySubtitle: 'Matches in progress will appear here.',
-                  onRefresh: () =>
-                      ref.read(allMatchesProvider.notifier).reload(),
-                ),
-                _MatchList(
-                  matches: state.completed,
-                  emptyTitle: 'No completed matches',
-                  emptySubtitle:
-                      'Completed match results will appear here.',
-                  onRefresh: () =>
-                      ref.read(allMatchesProvider.notifier).reload(),
+                const _SyncBanner(),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _MatchList(
+                        matches: state.upcoming,
+                        emptyTitle: 'No upcoming matches',
+                        emptySubtitle:
+                            'Scheduled matches will appear here once\nyour tournaments are in progress.',
+                        onRefresh: () =>
+                            ref.read(allMatchesProvider.notifier).reload(),
+                      ),
+                      _MatchList(
+                        matches: state.ongoing,
+                        emptyTitle: 'No ongoing matches',
+                        emptySubtitle: 'Matches in progress will appear here.',
+                        onRefresh: () =>
+                            ref.read(allMatchesProvider.notifier).reload(),
+                      ),
+                      _MatchList(
+                        matches: state.completed,
+                        emptyTitle: 'No completed matches',
+                        emptySubtitle:
+                            'Completed match results will appear here.',
+                        onRefresh: () =>
+                            ref.read(allMatchesProvider.notifier).reload(),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             );
@@ -441,6 +449,276 @@ class _SideChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── Needs Sync banner ─────────────────────────────────────────────────────────
+
+class _SyncBanner extends ConsumerWidget {
+  const _SyncBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final queue = ref.watch(scoreQueueProvider);
+    if (queue.isEmpty) return const SizedBox.shrink();
+
+    final conflicts = queue.where((e) => e.isConflict).toList();
+    final pending = queue.where((e) => e.isPending).toList();
+    final hasConflicts = conflicts.isNotEmpty;
+
+    return Material(
+      color: hasConflicts
+          ? AppColors.error.withValues(alpha: 0.08)
+          : AppColors.warning.withValues(alpha: 0.08),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => _showQueueSheet(context, ref, queue),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    hasConflicts ? Icons.warning_amber_rounded : Icons.sync,
+                    size: 18,
+                    color:
+                        hasConflicts ? AppColors.error : AppColors.warning,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      hasConflicts
+                          ? '${conflicts.length} sync conflict${conflicts.length > 1 ? 's' : ''} — tap to review'
+                          : '${pending.length} score update${pending.length > 1 ? 's' : ''} pending sync',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: hasConflicts
+                            ? AppColors.error
+                            : AppColors.warning,
+                      ),
+                    ),
+                  ),
+                  if (pending.isNotEmpty)
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () =>
+                          ref.read(scoreQueueProvider.notifier).syncAll(),
+                      child: Text(
+                        'Sync now',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: hasConflicts
+                              ? AppColors.error
+                              : AppColors.warning,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Divider(
+            height: 1,
+            color: hasConflicts
+                ? AppColors.error.withValues(alpha: 0.2)
+                : AppColors.warning.withValues(alpha: 0.2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showQueueSheet(
+      BuildContext context, WidgetRef ref, List<SyncQueueEntry> queue) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _SyncQueueSheet(queue: queue, queueRef: ref),
+    );
+  }
+}
+
+// ── Sync queue bottom sheet ───────────────────────────────────────────────────
+
+class _SyncQueueSheet extends ConsumerWidget {
+  const _SyncQueueSheet({required this.queue, required this.queueRef});
+
+  final List<SyncQueueEntry> queue;
+  final WidgetRef queueRef;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final liveQueue = ref.watch(scoreQueueProvider);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.5,
+      minChildSize: 0.3,
+      maxChildSize: 0.85,
+      expand: false,
+      builder: (context, scrollController) {
+        return Column(
+          children: [
+            // Handle
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outline,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Text(
+                    'Pending Sync (${liveQueue.length})',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const Spacer(),
+                  if (liveQueue.any((e) => e.isPending))
+                    TextButton.icon(
+                      onPressed: () =>
+                          ref.read(scoreQueueProvider.notifier).syncAll(),
+                      icon: const Icon(Icons.sync, size: 16),
+                      label: const Text('Sync all'),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(),
+            if (liveQueue.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  'All synced!',
+                  style: TextStyle(color: AppColors.onSurfaceVariant),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.separated(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  itemCount: liveQueue.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, i) =>
+                      _QueueEntryTile(entry: liveQueue[i]),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ── Queue entry tile ──────────────────────────────────────────────────────────
+
+class _QueueEntryTile extends ConsumerWidget {
+  const _QueueEntryTile({required this.entry});
+
+  final SyncQueueEntry entry;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isConflict = entry.isConflict;
+    final opLabel = entry.operationType == SyncQueueOpType.updateScore
+        ? 'Update Scores'
+        : 'Complete Match';
+    final matchShort = entry.matchId.substring(0, 8);
+
+    return Card(
+      margin: EdgeInsets.zero,
+      color: isConflict
+          ? AppColors.error.withValues(alpha: 0.05)
+          : AppColors.surfaceVariant,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: isConflict
+              ? AppColors.error.withValues(alpha: 0.3)
+              : AppColors.outline,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              isConflict ? Icons.warning_amber_rounded : Icons.cloud_upload_outlined,
+              size: 18,
+              color: isConflict ? AppColors.error : AppColors.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$opLabel · match $matchShort…',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: isConflict
+                          ? AppColors.error
+                          : AppColors.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isConflict
+                        ? _conflictLabel(entry.conflictType)
+                        : 'Waiting to sync…',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isConflict
+                          ? AppColors.error
+                          : AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              tooltip: 'Dismiss',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              color: AppColors.onSurfaceVariant,
+              onPressed: () =>
+                  ref.read(scoreQueueProvider.notifier).dismiss(entry.id),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _conflictLabel(String? conflictType) {
+    if (conflictType == 'MATCH_COMPLETED') {
+      return 'Match already completed on server — dismiss to clear';
+    }
+    if (conflictType == 'STALE_UPDATE') {
+      return 'Scores updated by another device — dismiss to clear';
+    }
+    return 'Sync conflict — dismiss to clear';
   }
 }
 

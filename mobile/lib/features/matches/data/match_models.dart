@@ -161,6 +161,12 @@ class SetScoreInput {
     this.sideBScore = 0,
   });
 
+  factory SetScoreInput.fromJson(Map<String, dynamic> json) => SetScoreInput(
+        setNumber: json['set_number'] as int,
+        sideAScore: json['side_a_score'] as int? ?? 0,
+        sideBScore: json['side_b_score'] as int? ?? 0,
+      );
+
   final int setNumber;
   int sideAScore;
   int sideBScore;
@@ -190,12 +196,14 @@ class SubmitScoreRequest {
 // ── Update-score DTO (no winner, PENDING → IN_PROGRESS) ───────────────────
 
 class UpdateScoreRequest {
-  const UpdateScoreRequest({required this.sets});
+  const UpdateScoreRequest({required this.sets, this.clientUpdatedAt});
 
   final List<SetScoreInput> sets;
+  final String? clientUpdatedAt;
 
   Map<String, dynamic> toJson() => {
         'sets': sets.map((s) => s.toJson()).toList(),
+        if (clientUpdatedAt != null) 'client_updated_at': clientUpdatedAt,
       };
 }
 
@@ -205,14 +213,17 @@ class CompleteMatchRequest {
   const CompleteMatchRequest({
     required this.winnerParticipantId,
     this.sets,
+    this.clientUpdatedAt,
   });
 
   final String winnerParticipantId;
   final List<SetScoreInput>? sets;
+  final String? clientUpdatedAt;
 
   Map<String, dynamic> toJson() => {
         'winner_participant_id': winnerParticipantId,
         if (sets != null) 'sets': sets!.map((s) => s.toJson()).toList(),
+        if (clientUpdatedAt != null) 'client_updated_at': clientUpdatedAt,
       };
 }
 
@@ -233,6 +244,7 @@ class MatchDetail {
     required this.version,
     this.scheduledAt,
     this.completedAt,
+    this.updatedAt,
     required this.sets,
   });
 
@@ -250,6 +262,7 @@ class MatchDetail {
         version: json['version'] as int? ?? 1,
         scheduledAt: json['scheduled_at'] as String?,
         completedAt: json['completed_at'] as String?,
+        updatedAt: json['updated_at'] as String?,
         sets: (json['sets'] as List<dynamic>? ?? [])
             .map((e) => SetScore.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -267,6 +280,7 @@ class MatchDetail {
   final int version;
   final String? scheduledAt;
   final String? completedAt;
+  final String? updatedAt;
   final List<SetScore> sets;
 
   bool get isPending => status == MatchStatus.pending;
@@ -279,4 +293,86 @@ class MatchDetail {
 
   List<SetScore> get sortedSets =>
       [...sets]..sort((a, b) => a.setNumber.compareTo(b.setNumber));
+}
+
+// ── Offline sync queue ────────────────────────────────────────────────────
+
+abstract final class SyncQueueOpType {
+  static const updateScore = 'UPDATE_SCORE';
+  static const completeMatch = 'COMPLETE_MATCH';
+}
+
+abstract final class SyncQueueEntryStatus {
+  static const pending = 'PENDING';
+  static const conflict = 'CONFLICT';
+}
+
+class SyncQueueEntry {
+  const SyncQueueEntry({
+    required this.id,
+    required this.matchId,
+    required this.operationType,
+    required this.sets,
+    this.winnerParticipantId,
+    required this.localTimestamp,
+    required this.status,
+    this.conflictType,
+    this.conflictMessage,
+  });
+
+  factory SyncQueueEntry.fromJson(Map<String, dynamic> json) => SyncQueueEntry(
+        id: json['id'] as String,
+        matchId: json['match_id'] as String,
+        operationType: json['operation_type'] as String,
+        sets: (json['sets'] as List<dynamic>)
+            .cast<Map<String, dynamic>>(),
+        winnerParticipantId: json['winner_participant_id'] as String?,
+        localTimestamp: json['local_timestamp'] as String,
+        status: json['status'] as String,
+        conflictType: json['conflict_type'] as String?,
+        conflictMessage: json['conflict_message'] as String?,
+      );
+
+  final String id;
+  final String matchId;
+  final String operationType;
+  final List<Map<String, dynamic>> sets;
+  final String? winnerParticipantId;
+  final String localTimestamp;
+  final String status;
+  final String? conflictType;
+  final String? conflictMessage;
+
+  bool get isPending => status == SyncQueueEntryStatus.pending;
+  bool get isConflict => status == SyncQueueEntryStatus.conflict;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'match_id': matchId,
+        'operation_type': operationType,
+        'sets': sets,
+        if (winnerParticipantId != null)
+          'winner_participant_id': winnerParticipantId,
+        'local_timestamp': localTimestamp,
+        'status': status,
+        if (conflictType != null) 'conflict_type': conflictType,
+        if (conflictMessage != null) 'conflict_message': conflictMessage,
+      };
+
+  SyncQueueEntry copyWith({
+    String? status,
+    String? conflictType,
+    String? conflictMessage,
+  }) =>
+      SyncQueueEntry(
+        id: id,
+        matchId: matchId,
+        operationType: operationType,
+        sets: sets,
+        winnerParticipantId: winnerParticipantId,
+        localTimestamp: localTimestamp,
+        status: status ?? this.status,
+        conflictType: conflictType ?? this.conflictType,
+        conflictMessage: conflictMessage ?? this.conflictMessage,
+      );
 }
