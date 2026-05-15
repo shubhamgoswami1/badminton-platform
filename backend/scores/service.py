@@ -21,7 +21,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.enums import MatchStatus, PlayType, TournamentFormat, TournamentStatus
-from common.exceptions import ConflictError, ForbiddenError, NotFoundError
+from common.exceptions import ConflictError, ForbiddenError, NotFoundError, SyncConflictError
 from scores.elo import compute_elo_delta
 from scores.schemas import CompleteMatchRequest, SubmitScoreRequest, UpdateScoreRequest
 from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant
@@ -33,6 +33,38 @@ def _now() -> datetime:
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
+
+def _touch(match: "Match") -> None:
+    """Increment version and stamp updated_at.  Call before every db.flush()."""
+    match.version = match.version + 1
+    match.updated_at = _now()
+
+
+async def _build_sync_conflict(
+    db: AsyncSession,
+    match: "Match",
+    conflict_type: str,
+    message: str,
+) -> SyncConflictError:
+    """Load current scores and package them into a SyncConflictError."""
+    from scores.schemas import SetScoreResponse
+    score_rows_result = await db.execute(
+        select(MatchScore)
+        .where(MatchScore.match_id == match.id)
+        .order_by(MatchScore.set_number)
+    )
+    sets = [
+        SetScoreResponse.model_validate(s).model_dump(mode="json")
+        for s in score_rows_result.scalars().all()
+    ]
+    return SyncConflictError(
+        conflict_type=conflict_type,
+        message=message,
+        server_version=match.version,
+        server_updated_at=match.updated_at,
+        server_status=match.status,
+        sets=sets,
+    )
 
 async def _get_match(db: AsyncSession, match_id: uuid.UUID) -> Match:
     result = await db.execute(select(Match).where(Match.id == match_id))
@@ -242,13 +274,40 @@ async def update_score(
     """
     Save intermediate set scores without completing the match.
     PENDING → IN_PROGRESS (noop if already IN_PROGRESS).
+
+    Conflict rules
+    ──────────────
+    1. If match is already COMPLETED/WALKOVER → SyncConflictError(MATCH_COMPLETED).
+    2. If client_updated_at is provided and is older than match.updated_at
+       → SyncConflictError(STALE_UPDATE).  "Latest timestamp wins."
+    3. If client_updated_at is absent (first write, no prior fetch) → accepted.
     """
     match = await _get_match(db, match_id)
 
     if match.status in (MatchStatus.COMPLETED.value, MatchStatus.WALKOVER.value):
-        raise ConflictError("Cannot update scores for a finished match")
+        raise await _build_sync_conflict(
+            db, match, "MATCH_COMPLETED",
+            "Match is already completed — cannot update scores",
+        )
     if match.status == MatchStatus.BYE.value:
         raise ConflictError("Cannot update scores for a BYE match")
+
+    # Stale-update check: reject if client's view is older than the server's.
+    if data.client_updated_at is not None:
+        # Normalise to UTC-aware for comparison.
+        client_ts = data.client_updated_at
+        if client_ts.tzinfo is None:
+            from datetime import timezone as _tz
+            client_ts = client_ts.replace(tzinfo=_tz.utc)
+        server_ts = match.updated_at
+        if server_ts.tzinfo is None:
+            from datetime import timezone as _tz
+            server_ts = server_ts.replace(tzinfo=_tz.utc)
+        if client_ts < server_ts:
+            raise await _build_sync_conflict(
+                db, match, "STALE_UPDATE",
+                "Your update is outdated — the server has a newer version",
+            )
 
     t = await _get_tournament(db, match.tournament_id)
     await _assert_authorised(db, match, t, user_id)
@@ -258,7 +317,7 @@ async def update_score(
     if match.status == MatchStatus.PENDING.value:
         match.status = MatchStatus.IN_PROGRESS.value
 
-    match.version = match.version + 1
+    _touch(match)
     await db.flush()
 
     score_rows_result = await db.execute(
@@ -280,7 +339,10 @@ async def submit_score(
     match = await _get_match(db, match_id)
 
     if match.status in (MatchStatus.COMPLETED.value, MatchStatus.WALKOVER.value):
-        raise ConflictError("Match score has already been submitted")
+        raise await _build_sync_conflict(
+            db, match, "MATCH_COMPLETED",
+            "Match score has already been submitted",
+        )
     if match.status == MatchStatus.BYE.value:
         raise ConflictError("Cannot submit score for a BYE match")
 
@@ -297,7 +359,7 @@ async def submit_score(
     match.winner_participant_id = winner_id
     match.status = MatchStatus.COMPLETED.value
     match.completed_at = _now()
-    match.version = match.version + 1
+    _touch(match)
     await db.flush()
 
     await _apply_elo(db, match, t)
@@ -320,11 +382,36 @@ async def complete_match(
     Complete a match, optionally replacing scores.
     Accepts PENDING or IN_PROGRESS → COMPLETED.
     Applies Elo (singles only) and advances knockout bracket.
+
+    Idempotency
+    ───────────
+    If the match is already COMPLETED with the **same** winner this call
+    returns 200 with the current server state — safe to retry after a
+    network timeout.  A different winner raises MATCH_COMPLETED conflict.
+
+    WALKOVER always raises MATCH_COMPLETED (cannot override via /complete).
     """
     match = await _get_match(db, match_id)
 
-    if match.status in (MatchStatus.COMPLETED.value, MatchStatus.WALKOVER.value):
-        raise ConflictError("Match already has a result")
+    if match.status == MatchStatus.COMPLETED.value:
+        # Idempotent: same winner → return current state unchanged.
+        if match.winner_participant_id == data.winner_participant_id:
+            score_rows_result = await db.execute(
+                select(MatchScore).where(MatchScore.match_id == match_id).order_by(MatchScore.set_number)
+            )
+            return match, list(score_rows_result.scalars().all())
+        # Different winner → structured conflict.
+        raise await _build_sync_conflict(
+            db, match, "MATCH_COMPLETED",
+            "Match is already completed with a different winner",
+        )
+
+    if match.status == MatchStatus.WALKOVER.value:
+        raise await _build_sync_conflict(
+            db, match, "MATCH_COMPLETED",
+            "Match was settled as a walkover — cannot complete via this endpoint",
+        )
+
     if match.status == MatchStatus.BYE.value:
         raise ConflictError("Cannot complete a BYE match")
 
@@ -342,7 +429,7 @@ async def complete_match(
     match.winner_participant_id = winner_id
     match.status = MatchStatus.COMPLETED.value
     match.completed_at = _now()
-    match.version = match.version + 1
+    _touch(match)
     await db.flush()
 
     await _apply_elo(db, match, t)
@@ -396,7 +483,7 @@ async def record_walkover(
     match.winner_participant_id = winner_participant_id
     match.status = MatchStatus.WALKOVER.value
     match.completed_at = _now()
-    match.version = match.version + 1
+    _touch(match)
     await db.flush()
 
     await _propagate_winner(db, match, t, winner_participant_id)

@@ -15,10 +15,12 @@ import uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import scores.service as svc
 from common.dependencies import get_current_user
+from common.exceptions import SyncConflictError
 from common.response import ok
 from database import get_db
 from fastapi import Query
@@ -36,6 +38,48 @@ from users.models import User
 router = APIRouter(prefix="/matches", tags=["scores"])
 
 
+def _sync_conflict_response(exc: SyncConflictError) -> JSONResponse:
+    """
+    Build the 409 SYNC_CONFLICT response.
+
+    Shape
+    ─────
+    {
+      "data": {
+        "server_version": <int>,
+        "server_updated_at": "<ISO-8601>",
+        "server_status": "<str>",
+        "sets": [...]
+      },
+      "error": {
+        "code": "SYNC_CONFLICT",
+        "message": "<str>",
+        "conflict_type": "STALE_UPDATE | MATCH_COMPLETED"
+      }
+    }
+
+    The client uses `data` to update its local state before retrying.
+    """
+    return JSONResponse(
+        status_code=409,
+        content={
+            "data": {
+                "server_version": exc.server_version,
+                "server_updated_at": exc.server_updated_at.isoformat()
+                if exc.server_updated_at
+                else None,
+                "server_status": exc.server_status,
+                "sets": exc.sets,
+            },
+            "error": {
+                "code": "SYNC_CONFLICT",
+                "message": exc.message,
+                "conflict_type": exc.conflict_type,
+            },
+        },
+    )
+
+
 def _detail_response(match, score_rows) -> dict:
     return ok(
         MatchDetailResponse(
@@ -51,6 +95,7 @@ def _detail_response(match, score_rows) -> dict:
             version=match.version,
             scheduled_at=match.scheduled_at,
             completed_at=match.completed_at,
+            updated_at=match.updated_at,
             sets=[SetScoreResponse.model_validate(s) for s in score_rows],
         ).model_dump()
     )
@@ -112,8 +157,14 @@ async def update_score(
     """
     Save set scores without completing the match.
     Transitions PENDING → IN_PROGRESS on first call.
+
+    Optionally supply `client_updated_at` (the match.updated_at the client
+    last fetched) to enable offline-sync conflict detection.
     """
-    match, score_rows = await svc.update_score(db, match_id, current_user.id, body)
+    try:
+        match, score_rows = await svc.update_score(db, match_id, current_user.id, body)
+    except SyncConflictError as exc:
+        return _sync_conflict_response(exc)
     return _detail_response(match, score_rows)
 
 
@@ -129,8 +180,14 @@ async def complete_match(
     """
     Complete a match and apply Elo ratings.
     Optionally replaces stored scores if sets are provided.
+
+    Idempotent: retrying with the same winner after a network timeout returns
+    200 with the current server state rather than a conflict error.
     """
-    match, score_rows = await svc.complete_match(db, match_id, current_user.id, body)
+    try:
+        match, score_rows = await svc.complete_match(db, match_id, current_user.id, body)
+    except SyncConflictError as exc:
+        return _sync_conflict_response(exc)
     return _detail_response(match, score_rows)
 
 
@@ -144,7 +201,10 @@ async def submit_score(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Submit all set scores and complete the match in one request."""
-    match, score_rows = await svc.submit_score(db, match_id, current_user.id, body)
+    try:
+        match, score_rows = await svc.submit_score(db, match_id, current_user.id, body)
+    except SyncConflictError as exc:
+        return _sync_conflict_response(exc)
     return ok(
         MatchScoreResponse(
             match_id=match.id,

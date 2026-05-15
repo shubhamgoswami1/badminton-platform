@@ -99,6 +99,8 @@ class Match(UUIDPrimaryKeyMixin, Base):
     # Optimistic locking version — incremented on every score update / completion.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
+    # Sync conflict detection — updated on every write; compared against client_updated_at.
+    updated_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
 
 
 class Team(UUIDPrimaryKeyMixin, Base):
