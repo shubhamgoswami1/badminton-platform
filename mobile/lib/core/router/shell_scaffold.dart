@@ -13,6 +13,7 @@ class ShellScaffold extends StatelessWidget {
     _TabItem(icon: Icons.emoji_events_outlined, activeIcon: Icons.emoji_events, label: 'Tournaments', path: AppRoutes.tournaments),
     _TabItem(icon: Icons.sports_outlined, activeIcon: Icons.sports, label: 'Matches', path: AppRoutes.matches),
     _TabItem(icon: Icons.fitness_center_outlined, activeIcon: Icons.fitness_center, label: 'Training', path: AppRoutes.training),
+    _TabItem(icon: Icons.person_search_outlined, activeIcon: Icons.person_search, label: 'Players', path: AppRoutes.discover),
     _TabItem(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Profile', path: AppRoutes.profile),
   ];
 

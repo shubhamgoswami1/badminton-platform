@@ -6,12 +6,17 @@ import '../../features/auth/screens/otp_screen.dart';
 import '../../features/auth/screens/phone_entry_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/welcome_screen.dart';
+import '../../features/discovery/screens/player_search_screen.dart';
 import '../../features/home/screens/home_screen.dart';
+import '../../features/matches/data/match_models.dart';
+import '../../features/matches/screens/match_detail_screen.dart';
 import '../../features/matches/screens/matches_screen.dart';
 import '../../features/profile/screens/onboarding_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
+import '../../features/tournaments/data/tournament_models.dart';
 import '../../features/tournaments/screens/create_tournament_screen.dart';
 import '../../features/tournaments/screens/tournament_detail_screen.dart';
+import '../../features/tournaments/screens/tournament_fixtures_screen.dart';
 import '../../features/tournaments/screens/tournaments_screen.dart';
 import '../../features/training/screens/training_screen.dart';
 import 'shell_scaffold.dart';
@@ -28,6 +33,7 @@ abstract final class AppRoutes {
   static const tournaments      = '/tournaments';
   static const matches          = '/matches';
   static const training         = '/training';
+  static const discover         = '/discover';
   static const profile          = '/profile';
 
   // Tournament detail / create — full-screen (outside the shell).
@@ -36,6 +42,18 @@ abstract final class AppRoutes {
 
   /// Navigation helper: build the path for a specific tournament.
   static String tournamentDetailPath(String id) => '/tournament/$id';
+
+  // Match detail — full-screen (outside the shell).
+  static const _matchDetail = '/match/:id';
+
+  /// Navigation helper: build the path for a specific match.
+  static String matchDetailPath(String id) => '/match/$id';
+
+  // Tournament fixtures — full-screen (outside the shell).
+  static const _tournamentFixtures = '/fixtures/:id';
+
+  /// Navigation helper: build the path for a tournament's fixtures.
+  static String tournamentFixturesPath(String id) => '/fixtures/$id';
 }
 
 // ── Router provider ────────────────────────────────────────────────────────
@@ -122,6 +140,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
 
+      // ── Match detail full-screen route (no bottom nav) ─────────────
+      GoRoute(
+        path: AppRoutes._matchDetail,
+        builder: (context, state) {
+          final matchCtx = state.extra as MatchWithContext;
+          return MatchDetailScreen(matchContext: matchCtx);
+        },
+      ),
+
+      // ── Tournament fixtures full-screen route (no bottom nav) ──────
+      GoRoute(
+        path: AppRoutes._tournamentFixtures,
+        builder: (context, state) {
+          final tournament = state.extra as Tournament;
+          return TournamentFixturesScreen(tournament: tournament);
+        },
+      ),
+
       // ── Shell (bottom nav) ─────────────────────────────────────────
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
@@ -141,6 +177,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.training,
             builder: (_, __) => const TrainingScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.discover,
+            builder: (_, __) => const PlayerSearchScreen(),
           ),
           GoRoute(
             path: AppRoutes.profile,
