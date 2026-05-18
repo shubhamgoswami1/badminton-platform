@@ -124,6 +124,7 @@ class StandingEntry(BaseModel):
     wins: int
     losses: int
     points: int
+    point_diff: int  # cumulative (my_score − opponent_score) across all sets
 
 
 # ── Teams (doubles scaffold) ──────────────────────────────────

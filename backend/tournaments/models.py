@@ -94,6 +94,10 @@ class Match(UUIDPrimaryKeyMixin, Base):
         UUID(as_uuid=True), ForeignKey("matches.id"), nullable=True
     )
     winner_feeds_side: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 'A' or 'B'
+    # Elo guard — set to True once Elo has been applied; prevents double application.
+    elo_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Optimistic locking version — incremented on every score update / completion.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, default=_now_utc)
 
 

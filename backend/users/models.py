@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, ForeignKey, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,3 +64,9 @@ class PlayerProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Float, nullable=False, default=_RELIABILITY_DEFAULT
     )
     rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Elo system — updated after every completed singles match
+    elo_rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -29,6 +29,24 @@ String _dioErrorMessage(Object e, String fallback) {
   return fallback;
 }
 
+/// Extract the backend error message verbatim (used for start/remove where
+/// the backend message is already user-friendly).
+String _backendMessage(Object e, String fallback) {
+  if (e is DioException) {
+    final data = e.response?.data;
+    if (data is Map) {
+      final msg = (data['error'] as Map?)?['message']?.toString();
+      if (msg != null && msg.isNotEmpty) return msg;
+      final detail = data['detail']?.toString();
+      if (detail != null && detail.isNotEmpty) return detail;
+    }
+    final code = e.response?.statusCode;
+    if (code == 403) return 'Only the organiser can perform this action.';
+    if (code == 401) return 'Your session has expired. Please log in again.';
+  }
+  return fallback;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Location provider
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,34 +301,43 @@ class TournamentDetailState {
     this.isLoading = false,
     this.isJoining = false,
     this.hasJoined = false,
+    this.isStarting = false,
     this.error,
     this.joinError,
+    this.startError,
   });
 
   final Tournament? tournament;
   final bool isLoading;
   final bool isJoining;
   final bool hasJoined;
+  final bool isStarting;
   final String? error;
   final String? joinError;
+  final String? startError;
 
   TournamentDetailState copyWith({
     Tournament? tournament,
     bool? isLoading,
     bool? isJoining,
     bool? hasJoined,
+    bool? isStarting,
     String? error,
     String? joinError,
+    String? startError,
     bool clearError = false,
     bool clearJoinError = false,
+    bool clearStartError = false,
   }) =>
       TournamentDetailState(
         tournament: tournament ?? this.tournament,
         isLoading: isLoading ?? this.isLoading,
         isJoining: isJoining ?? this.isJoining,
         hasJoined: hasJoined ?? this.hasJoined,
+        isStarting: isStarting ?? this.isStarting,
         error: clearError ? null : (error ?? this.error),
         joinError: clearJoinError ? null : (joinError ?? this.joinError),
+        startError: clearStartError ? null : (startError ?? this.startError),
       );
 }
 
@@ -355,8 +382,21 @@ class TournamentDetailNotifier
     }
   }
 
-  void clearJoinError() =>
-      state = state.copyWith(clearJoinError: true);
+  Future<bool> startTournament() async {
+    state = state.copyWith(isStarting: true, clearStartError: true);
+    try {
+      final t = await _repo.startTournament(_id);
+      state = state.copyWith(isStarting: false, tournament: t);
+      return true;
+    } catch (e) {
+      final msg = _backendMessage(e, 'Could not start tournament. Please try again.');
+      state = state.copyWith(isStarting: false, startError: msg);
+      return false;
+    }
+  }
+
+  void clearJoinError() => state = state.copyWith(clearJoinError: true);
+  void clearStartError() => state = state.copyWith(clearStartError: true);
 }
 
 final tournamentDetailProvider = StateNotifierProvider.family<
@@ -421,4 +461,109 @@ final createTournamentProvider =
     StateNotifierProvider<CreateTournamentNotifier, CreateTournamentState>(
   (ref) =>
       CreateTournamentNotifier(ref.watch(tournamentRepositoryProvider)),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Participants (host view — family by tournamentId)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class ParticipantsState {
+  const ParticipantsState({
+    this.items = const [],
+    this.isLoading = false,
+    this.removingId,
+    this.error,
+    this.removeError,
+  });
+
+  final List<TournamentParticipant> items;
+  final bool isLoading;
+  final String? removingId; // participantId currently being removed
+  final String? error;
+  final String? removeError;
+
+  List<TournamentParticipant> get active =>
+      items.where((p) => p.isActive).toList();
+
+  ParticipantsState copyWith({
+    List<TournamentParticipant>? items,
+    bool? isLoading,
+    String? removingId,
+    String? error,
+    String? removeError,
+    bool clearRemovingId = false,
+    bool clearError = false,
+    bool clearRemoveError = false,
+  }) =>
+      ParticipantsState(
+        items: items ?? this.items,
+        isLoading: isLoading ?? this.isLoading,
+        removingId: clearRemovingId ? null : (removingId ?? this.removingId),
+        error: clearError ? null : (error ?? this.error),
+        removeError:
+            clearRemoveError ? null : (removeError ?? this.removeError),
+      );
+}
+
+class ParticipantsNotifier extends StateNotifier<ParticipantsState> {
+  ParticipantsNotifier(this._repo, this._tournamentId)
+      : super(const ParticipantsState());
+
+  final TournamentRepository _repo;
+  final String _tournamentId;
+
+  Future<void> load() async {
+    if (state.isLoading) return;
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final items = await _repo.getParticipants(_tournamentId);
+      state = state.copyWith(isLoading: false, items: items);
+    } catch (_) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Could not load participants.',
+      );
+    }
+  }
+
+  Future<void> reload() async {
+    state = const ParticipantsState();
+    await load();
+  }
+
+  Future<bool> remove(String participantId) async {
+    state = state.copyWith(
+      removingId: participantId,
+      clearRemoveError: true,
+    );
+    try {
+      await _repo.removeParticipant(_tournamentId, participantId);
+      // Optimistically remove from local list; reload for server truth.
+      final updated =
+          state.items.where((p) => p.id != participantId).toList();
+      state = state.copyWith(
+        items: updated,
+        clearRemovingId: true,
+      );
+      return true;
+    } catch (e) {
+      final msg =
+          _backendMessage(e, 'Could not remove participant. Please try again.');
+      state = state.copyWith(
+        clearRemovingId: true,
+        removeError: msg,
+      );
+      return false;
+    }
+  }
+
+  void clearRemoveError() => state = state.copyWith(clearRemoveError: true);
+}
+
+final participantsProvider = StateNotifierProvider.family<ParticipantsNotifier,
+    ParticipantsState, String>(
+  (ref, tournamentId) => ParticipantsNotifier(
+    ref.watch(tournamentRepositoryProvider),
+    tournamentId,
+  ),
 );

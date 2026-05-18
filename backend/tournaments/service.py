@@ -27,7 +27,7 @@ from tournaments.schemas import (
     TournamentCreate,
     TournamentUpdate,
 )
-from users.models import User
+from users.models import PlayerProfile, User
 
 
 def _now() -> datetime:
@@ -431,6 +431,47 @@ async def list_teams(db: AsyncSession, tournament_id: uuid.UUID) -> list[Team]:
 # ── Bracket generation (P5 / P7) ─────────────────────────────
 
 
+async def _get_seeded_participant_ids(
+    db: AsyncSession,
+    registered: list[TournamentParticipant],
+) -> list[uuid.UUID]:
+    """
+    Return participant UUIDs ordered for bracket seeding.
+
+    Priority:
+      1. Explicit seed_order ASC  (set by the host via PUT /seed-order)
+      2. PlayerProfile.rating DESC  (auto-seeding; higher-rated → better seed)
+      3. registered_at ASC  (stable tiebreaker when ratings are equal / absent)
+
+    Participants without a rating come after rated ones in the auto-seeded
+    block.  Participants with an explicit seed_order always come before
+    unranked ones regardless of rating.
+    """
+    if not registered:
+        return []
+
+    # Fetch ratings in one query (LEFT JOIN equivalent — missing profiles → None)
+    user_ids = [p.user_id for p in registered]
+    rows = await db.execute(
+        select(PlayerProfile.user_id, PlayerProfile.rating).where(
+            PlayerProfile.user_id.in_(user_ids)
+        )
+    )
+    ratings: dict[uuid.UUID, float | None] = {r.user_id: r.rating for r in rows}
+
+    def _key(p: TournamentParticipant) -> tuple:
+        # --- primary: manual seed (lower = earlier; None treated as ∞) ---
+        seed = p.seed_order if p.seed_order is not None else float("inf")
+        # --- secondary: rating DESC (negate so higher rating sorts first;
+        #                None treated as ∞ so unrated go last in the block) ---
+        r = ratings.get(p.user_id)
+        rating_key = -r if r is not None else float("inf")
+        # --- tertiary: registration time (stable, deterministic tiebreak) ---
+        return (seed, rating_key, p.registered_at)
+
+    return [p.id for p in sorted(registered, key=_key)]
+
+
 async def generate_bracket(
     db: AsyncSession, tournament_id: uuid.UUID, organiser_id: uuid.UUID
 ) -> list[Match]:
@@ -450,7 +491,8 @@ async def generate_bracket(
     if len(registered) < 4:
         raise ConflictError("At least 4 registered participants are required")
 
-    participant_ids = [p.id for p in registered]
+    # Order by explicit seed_order → rating DESC → registered_at (see helper).
+    participant_ids = await _get_seeded_participant_ids(db, registered)
 
     if t.format == TournamentFormat.KNOCKOUT.value:
         matches = generate_knockout_bracket(tournament_id, participant_ids)
@@ -490,6 +532,14 @@ async def get_match(db: AsyncSession, match_id: uuid.UUID) -> Match:
 async def get_round_robin_standings(
     db: AsyncSession, tournament_id: uuid.UUID
 ) -> list[dict]:
+    """
+    Compute round-robin standings.
+
+    Sort order (all descending):
+      1. points      (2 per win, 0 per loss)
+      2. point_diff  (cumulative set-score differential)
+      3. wins        (secondary guard for equal point_diff)
+    """
     t = await get_tournament(db, tournament_id)
     if t.format != TournamentFormat.ROUND_ROBIN.value:
         raise ConflictError("Standings are only available for round robin tournaments")
@@ -498,32 +548,73 @@ async def get_round_robin_standings(
     participants = await list_participants(db, tournament_id)
 
     stats: dict[uuid.UUID, dict] = {
-        p.id: {"participant_id": p.id, "user_id": p.user_id,
-               "matches_played": 0, "wins": 0, "losses": 0, "points": 0}
+        p.id: {
+            "participant_id": p.id,
+            "user_id": p.user_id,
+            "matches_played": 0,
+            "wins": 0,
+            "losses": 0,
+            "points": 0,
+            "point_diff": 0,
+        }
         for p in participants if p.status == ParticipantStatus.REGISTERED.value
     }
 
-    for m in matches:
-        if m.status != MatchStatus.COMPLETED.value and m.status != MatchStatus.WALKOVER.value:
-            continue
+    finished_statuses = {MatchStatus.COMPLETED.value, MatchStatus.WALKOVER.value}
+    finished_matches = [m for m in matches if m.status in finished_statuses]
+
+    # ── Win / loss / points ─────────────────────────────────────────────────
+    for m in finished_matches:
         if m.side_a_participant_id and m.side_a_participant_id in stats:
             stats[m.side_a_participant_id]["matches_played"] += 1
         if m.side_b_participant_id and m.side_b_participant_id in stats:
             stats[m.side_b_participant_id]["matches_played"] += 1
 
-        if m.winner_participant_id and m.winner_participant_id in stats:
-            stats[m.winner_participant_id]["wins"] += 1
-            stats[m.winner_participant_id]["points"] += 2
-            # loser
-            loser_id = (
-                m.side_b_participant_id
-                if m.winner_participant_id == m.side_a_participant_id
-                else m.side_a_participant_id
-            )
-            if loser_id and loser_id in stats:
-                stats[loser_id]["losses"] += 1
+        if not m.winner_participant_id:
+            continue
 
-    return sorted(stats.values(), key=lambda x: x["points"], reverse=True)
+        winner_id = m.winner_participant_id
+        loser_id = (
+            m.side_b_participant_id
+            if winner_id == m.side_a_participant_id
+            else m.side_a_participant_id
+        )
+
+        if winner_id in stats:
+            stats[winner_id]["wins"] += 1
+            stats[winner_id]["points"] += 2
+        if loser_id and loser_id in stats:
+            stats[loser_id]["losses"] += 1
+
+    # ── Point differential (requires set-score rows) ────────────────────────
+    if finished_matches:
+        finished_ids = [m.id for m in finished_matches]
+        score_result = await db.execute(
+            select(MatchScore).where(MatchScore.match_id.in_(finished_ids))
+        )
+        score_rows = score_result.scalars().all()
+
+        # Build match_id → (side_a_pid, side_b_pid) lookup.
+        sides_map: dict[uuid.UUID, tuple] = {
+            m.id: (m.side_a_participant_id, m.side_b_participant_id)
+            for m in finished_matches
+        }
+
+        for s in score_rows:
+            pair = sides_map.get(s.match_id)
+            if not pair:
+                continue
+            pid_a, pid_b = pair
+            if pid_a and pid_a in stats:
+                stats[pid_a]["point_diff"] += s.side_a_score - s.side_b_score
+            if pid_b and pid_b in stats:
+                stats[pid_b]["point_diff"] += s.side_b_score - s.side_a_score
+
+    return sorted(
+        stats.values(),
+        key=lambda x: (x["points"], x["point_diff"], x["wins"]),
+        reverse=True,
+    )
 
 
 # ── Discovery (nearby / my-hosted / my-joined) ────────────────────────────

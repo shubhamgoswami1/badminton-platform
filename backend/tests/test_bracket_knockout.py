@@ -11,6 +11,13 @@ from tests.test_auth import _do_full_login
 PHONE_ORG = "+913000000001"
 PHONES = [f"+91300000{i:04d}" for i in range(2, 20)]
 
+# Distinct phones for the rating-seeding test — no collision with the pool above.
+PHONE_SEED_ORG = "+916000000001"
+PHONE_SEED_P1  = "+916000000002"   # rating 10 (top seed)
+PHONE_SEED_P2  = "+916000000003"   # rating  8
+PHONE_SEED_P3  = "+916000000004"   # rating  6
+PHONE_SEED_P4  = "+916000000005"   # rating  4 (bottom seed)
+
 
 # ── Helpers ───────────────────────────────────────────────────
 
@@ -209,3 +216,93 @@ async def test_list_matches(client: AsyncClient, db_session: AsyncSession):
     r = await client.get(f"/api/v1/tournaments/{tid}/matches", headers={"Authorization": f"Bearer {org_token}"})
     assert r.status_code == 200
     assert len(r.json()["data"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_knockout_seeding_by_rating(client: AsyncClient, db_session: AsyncSession):
+    """
+    Players with distinct ratings should be seeded highest-first so that the
+    standard 1-vs-N pairing produces:
+      R1 Match A: top seed (rating 10) vs bottom seed (rating 4)
+      R1 Match B: 2nd seed (rating  8) vs 3rd seed  (rating 6)
+    """
+    # --- create organiser ---
+    org = await _do_full_login(client, PHONE_SEED_ORG)
+    org_token = org["access_token"]
+
+    # --- create tournament ---
+    r = await client.post(
+        "/api/v1/tournaments",
+        json={"title": "Seed Cup", "format": "KNOCKOUT",
+              "match_format": "BEST_OF_3", "play_type": "SINGLES"},
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r.status_code == 201, r.text
+    tid = r.json()["data"]["id"]
+
+    await client.post(
+        f"/api/v1/tournaments/{tid}/status",
+        json={"next_status": "REGISTRATION_OPEN"},
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+
+    # --- register 4 players with explicit ratings ---
+    player_phones  = [PHONE_SEED_P1, PHONE_SEED_P2, PHONE_SEED_P3, PHONE_SEED_P4]
+    player_ratings = [10.0, 8.0, 6.0, 4.0]
+    participant_ids: list[str] = []
+
+    for phone, rating in zip(player_phones, player_ratings):
+        tok = (await _do_full_login(client, phone))["access_token"]
+
+        # Set player profile with a rating
+        pr = await client.put(
+            "/api/v1/users/me/profile",
+            json={"display_name": f"Player-{int(rating)}", "rating": rating},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert pr.status_code == 200, pr.text
+
+        reg = await client.post(
+            f"/api/v1/tournaments/{tid}/participants",
+            json={},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert reg.status_code == 201, reg.text
+        participant_ids.append(reg.json()["data"]["id"])
+
+    pid_top, pid_2nd, pid_3rd, pid_bot = participant_ids
+
+    # --- close registration and generate bracket ---
+    await client.post(
+        f"/api/v1/tournaments/{tid}/status",
+        json={"next_status": "REGISTRATION_CLOSED"},
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    gen = await client.post(
+        f"/api/v1/tournaments/{tid}/bracket/generate",
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert gen.status_code == 201, gen.text
+
+    # --- fetch R1 matches ---
+    r = await client.get(
+        f"/api/v1/tournaments/{tid}/bracket",
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r.status_code == 200, r.text
+    matches = r.json()["data"]
+    r1_matches = [m for m in matches if m["round"] == 1]
+    assert len(r1_matches) == 2
+
+    r1_pairs = [
+        frozenset([m["side_a_participant_id"], m["side_b_participant_id"]])
+        for m in r1_matches
+    ]
+
+    # 1 vs N: top-seed plays bottom-seed; 2nd seed plays 3rd seed
+    assert frozenset([pid_top, pid_bot]) in r1_pairs, (
+        f"Expected top ({pid_top}) vs bottom ({pid_bot}) in R1; got {r1_pairs}"
+    )
+    assert frozenset([pid_2nd, pid_3rd]) in r1_pairs, (
+        f"Expected 2nd ({pid_2nd}) vs 3rd ({pid_3rd}) in R1; got {r1_pairs}"
+    )
