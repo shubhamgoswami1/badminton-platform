@@ -95,6 +95,12 @@ class ScoreQueueNotifier extends StateNotifier<List<SyncQueueEntry>> {
     }
   }
 
+  /// Clears the entire queue (called on logout so a new user starts fresh).
+  Future<void> clearAll() async {
+    state = const [];
+    await _store.saveAll(const []);
+  }
+
   // ── Sync ────────────────────────────────────────────────────────────────────
 
   Future<void> syncAll() async {

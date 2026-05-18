@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -35,9 +36,24 @@ class _TournamentDetailScreenState
   }
 
   Future<void> _handleJoin() async {
+    final tournament = ref
+        .read(tournamentDetailProvider(widget.tournamentId))
+        .tournament;
+    final isDoubles = tournament != null &&
+        (tournament.playType == PlayType.doubles ||
+            tournament.playType == PlayType.mixedDoubles);
+
+    String? partnerUserId;
+
+    if (isDoubles) {
+      // Show partner entry sheet before joining
+      partnerUserId = await _showPartnerSheet();
+      if (partnerUserId == null) return; // user dismissed
+    }
+
     final ok = await ref
         .read(tournamentDetailProvider(widget.tournamentId).notifier)
-        .join();
+        .join(partnerUserId: partnerUserId);
     if (!mounted) return;
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -48,6 +64,19 @@ class _TournamentDetailScreenState
       );
       ref.read(myJoinedProvider.notifier).reload();
     }
+  }
+
+  /// Shows a bottom sheet prompting the user to enter their partner's User ID.
+  /// Returns the UUID string if confirmed, or null if dismissed.
+  Future<String?> _showPartnerSheet() async {
+    return showModalBottomSheet<String?>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _PartnerEntrySheet(),
+    );
   }
 
   Future<void> _handleStart() async {
@@ -992,3 +1021,128 @@ String _month(int m) => const [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ][m];
+
+// ── Partner entry bottom sheet ────────────────────────────────────────────────
+
+/// Shown when a player joins a DOUBLES or MIXED_DOUBLES tournament.
+/// Prompts for the partner's User ID (UUID). Returns the ID string on confirm,
+/// or null if the user closes without confirming.
+class _PartnerEntrySheet extends StatefulWidget {
+  const _PartnerEntrySheet();
+
+  @override
+  State<_PartnerEntrySheet> createState() => _PartnerEntrySheetState();
+}
+
+class _PartnerEntrySheetState extends State<_PartnerEntrySheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _ctrl = TextEditingController();
+
+  static final _uuidRegex = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outline,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            Text('Enter Partner\'s User ID', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 6),
+            Text(
+              'Ask your partner to copy their User ID from their profile screen.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppColors.onSurfaceVariant),
+            ),
+            const SizedBox(height: 20),
+
+            TextFormField(
+              controller: _ctrl,
+              decoration: const InputDecoration(
+                labelText: 'Partner User ID',
+                hintText: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.person_search_outlined),
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F\-]')),
+              ],
+              textInputAction: TextInputAction.done,
+              autocorrect: false,
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) {
+                  return 'Partner User ID is required';
+                }
+                if (!_uuidRegex.hasMatch(v.trim())) {
+                  return 'Please enter a valid UUID';
+                }
+                return null;
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.sports_tennis),
+                    label: const Text('Confirm Partner'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    onPressed: () {
+                      if (_formKey.currentState!.validate()) {
+                        Navigator.of(context).pop(_ctrl.text.trim());
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

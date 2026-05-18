@@ -1,5 +1,5 @@
 """
-P6 Score submission tests — 12 required cases.
+P6 Score submission tests — 14 required cases.
 """
 
 import pytest
@@ -72,6 +72,55 @@ async def test_submit_score_by_organiser(client: AsyncClient, db_session: AsyncS
     assert data["status"] == "COMPLETED"
     assert data["winner_participant_id"] == winner
     assert len(data["sets"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_submit_score_on_bye_match_rejected(client: AsyncClient, db_session: AsyncSession):
+    """Submitting a score on a BYE match returns 409."""
+    # n=3 produces a 4-slot bracket with one BYE in round 1
+    tid, org_token, _, _ = await _setup_match(client, n=3)
+
+    r = await client.get(
+        f"/api/v1/tournaments/{tid}/matches",
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    matches = r.json()["data"]
+    bye_match = next((m for m in matches if m["status"] == "BYE"), None)
+    assert bye_match is not None, "Expected a BYE match for a 3-participant bracket"
+
+    # Attempt to submit a score on the BYE match
+    winner = bye_match["side_a_participant_id"] or bye_match["winner_participant_id"]
+    r2 = await client.post(
+        f"/api/v1/matches/{bye_match['id']}/score",
+        json=_score_payload(winner),
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_organiser_complete_match_idempotent(client: AsyncClient, db_session: AsyncSession):
+    """POST /complete with the same winner on an already-COMPLETED match returns 200 (idempotent)."""
+    _, org_token, match, _ = await _setup_match(client)
+    winner = match["side_a_participant_id"]
+
+    # First completion via /score endpoint
+    r1 = await client.post(
+        f"/api/v1/matches/{match['id']}/score",
+        json=_score_payload(winner),
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r1.status_code == 200
+
+    # Retry via /complete with the same winner — should be idempotent (200)
+    r2 = await client.post(
+        f"/api/v1/matches/{match['id']}/complete",
+        json={"winner_participant_id": winner},
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["data"]["winner_participant_id"] == winner
+    assert r2.json()["data"]["status"] == "COMPLETED"
 
 
 @pytest.mark.asyncio
@@ -199,7 +248,7 @@ async def test_submit_empty_sets_rejected(client: AsyncClient, db_session: Async
 
 @pytest.mark.asyncio
 async def test_tournament_completion_after_all_matches(client: AsyncClient, db_session: AsyncSession):
-    """All matches completed for a 4-player KO → final completed → tournament still IN_PROGRESS (manual close)."""
+    """All matches completed for a 4-player KO → final completed → tournament auto-transitions to COMPLETED."""
     tid, org_token, _, _ = await _setup_match(client, n=4)
 
     r = await client.get(f"/api/v1/tournaments/{tid}/matches", headers={"Authorization": f"Bearer {org_token}"})
@@ -219,7 +268,7 @@ async def test_tournament_completion_after_all_matches(client: AsyncClient, db_s
         await client.post(f"/api/v1/matches/{final['id']}/score", json=_score_payload(winner), headers={"Authorization": f"Bearer {org_token}"})
 
     t_r = await client.get(f"/api/v1/tournaments/{tid}", headers={"Authorization": f"Bearer {org_token}"})
-    assert t_r.json()["data"]["status"] == "IN_PROGRESS"
+    assert t_r.json()["data"]["status"] == "COMPLETED"
 
 
 # ── Additional coverage cases ─────────────────────────────────────────────────

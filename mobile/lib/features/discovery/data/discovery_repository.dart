@@ -63,6 +63,33 @@ class DiscoveryRepository {
         .toList();
   }
 
+  Future<({List<DiscoveryTournament> items, int total})> discoverTournaments({
+    String? city,
+    String? status,
+    String? format,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    final params = <String, dynamic>{'limit': limit, 'offset': offset};
+    if (city != null && city.isNotEmpty) params['city'] = city;
+    if (status != null) params['status'] = status;
+    if (format != null) params['format'] = format;
+
+    final response = await _dio.get(
+      ApiEndpoints.discoverTournaments,
+      queryParameters: params,
+    );
+    final body = response.data as Map<String, dynamic>;
+    final dataList = body['data'] as List<dynamic>;
+    final total = (body['meta'] as Map<String, dynamic>)['total'] as int;
+    return (
+      items: dataList
+          .map((e) => DiscoveryTournament.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      total: total,
+    );
+  }
+
   Future<Venue> submitVenue(VenueCreate data) async {
     final response = await _dio.post(
       ApiEndpoints.venues,

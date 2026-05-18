@@ -188,8 +188,8 @@ class _EditTournamentScreenState extends ConsumerState<EditTournamentScreen> {
   @override
   Widget build(BuildContext context) {
     final detailState = ref.watch(tournamentDetailProvider(widget.tournament.id));
-    final isSubmitting = detailState.isTransitioning; // reuses same flag
-    final error = detailState.transitionError;
+    final isSubmitting = detailState.isUpdating;
+    final error = detailState.updateError;
     final theme = Theme.of(context);
 
     return Scaffold(

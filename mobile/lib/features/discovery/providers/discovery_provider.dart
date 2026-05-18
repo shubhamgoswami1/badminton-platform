@@ -266,3 +266,79 @@ class VenuesNotifier extends StateNotifier<VenuesState> {
 final venuesProvider = StateNotifierProvider<VenuesNotifier, VenuesState>(
   (ref) => VenuesNotifier(ref.watch(discoveryRepositoryProvider)),
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discovery Tournaments Provider
+// ─────────────────────────────────────────────────────────────────────────────
+
+class DiscoveryTournamentsState {
+  const DiscoveryTournamentsState({
+    this.items = const [],
+    this.isLoading = false,
+    this.error,
+    this.cityFilter,
+  });
+
+  final List<DiscoveryTournament> items;
+  final bool isLoading;
+  final String? error;
+  final String? cityFilter;
+
+  DiscoveryTournamentsState copyWith({
+    List<DiscoveryTournament>? items,
+    bool? isLoading,
+    String? error,
+    bool clearError = false,
+    String? cityFilter,
+    bool clearCityFilter = false,
+  }) =>
+      DiscoveryTournamentsState(
+        items: items ?? this.items,
+        isLoading: isLoading ?? this.isLoading,
+        error: clearError ? null : (error ?? this.error),
+        cityFilter: clearCityFilter ? null : (cityFilter ?? this.cityFilter),
+      );
+}
+
+class DiscoveryTournamentsNotifier
+    extends StateNotifier<DiscoveryTournamentsState> {
+  DiscoveryTournamentsNotifier(this._repo)
+      : super(const DiscoveryTournamentsState());
+
+  final DiscoveryRepository _repo;
+
+  Future<void> load({String? city}) async {
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      cityFilter: city,
+    );
+    try {
+      final result = await _repo.discoverTournaments(
+        city: city ?? state.cityFilter,
+        status: 'REGISTRATION_OPEN',
+      );
+      state = state.copyWith(isLoading: false, items: result.items);
+    } catch (_) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Could not load tournaments. Please try again.',
+      );
+    }
+  }
+
+  Future<void> refresh() => load(city: state.cityFilter);
+
+  void setCityFilter(String? city) {
+    state = state.copyWith(
+      cityFilter: city,
+      clearCityFilter: city == null,
+    );
+  }
+}
+
+final discoveryTournamentsProvider =
+    StateNotifierProvider<DiscoveryTournamentsNotifier,
+        DiscoveryTournamentsState>(
+  (ref) => DiscoveryTournamentsNotifier(ref.watch(discoveryRepositoryProvider)),
+);

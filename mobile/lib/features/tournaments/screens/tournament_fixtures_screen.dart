@@ -162,26 +162,27 @@ class _KnockoutFixtures extends StatelessWidget {
     final maxRound = state.maxRound;
     final sortedRounds = byRound.keys.toList()..sort();
 
-    // Compute how many slots are in round 1 (always the largest round)
-    final r1Matches = (byRound[sortedRounds.first] ?? [])
-        .where((m) => m.status != MatchStatus.bye)
-        .toList()
-      ..sort((a, b) => a.matchNumber.compareTo(b.matchNumber));
-
     // Each slot height = card height + vertical gap
     const slotHeight = _cardHeight + 24.0;
-    final r1Count = r1Matches.length;
-    // Total bracket height fits all round-1 slots
-    final totalHeight = math.max(r1Count * slotHeight, slotHeight * 2);
 
-    // Build ordered match lists per round (sorted by matchNumber)
+    // Build FULL sorted lists per round including BYEs — used for slot math.
+    // BYE slots must be counted so non-power-of-2 brackets align correctly.
+    final fullMatchesByRound = {
+      for (final r in sortedRounds)
+        r: ((byRound[r] ?? [])..sort((a, b) => a.matchNumber.compareTo(b.matchNumber))),
+    };
+
+    // Build filtered lists (no BYEs) — used only for card rendering.
     final matchesByRound = {
       for (final r in sortedRounds)
-        r: (byRound[r] ?? [])
+        r: fullMatchesByRound[r]!
             .where((m) => m.status != MatchStatus.bye)
-            .toList()
-          ..sort((a, b) => a.matchNumber.compareTo(b.matchNumber)),
+            .toList(),
     };
+
+    // Total height is driven by full R1 slot count (includes BYEs).
+    final r1FullCount = fullMatchesByRound[sortedRounds.first]!.length;
+    final totalHeight = math.max(r1FullCount * slotHeight, slotHeight * 2);
 
     final bracketWidth = sortedRounds.length * (_cardWidth + _roundGap) + 16;
 
@@ -224,8 +225,9 @@ class _KnockoutFixtures extends StatelessWidget {
                 child: CustomPaint(
                   painter: _BracketLinePainter(
                     rounds: sortedRounds,
-                    matchesByRound: matchesByRound,
-                    r1Count: r1Count,
+                    // Painter receives FULL lists so slot positions are correct
+                    // even for non-power-of-2 brackets.
+                    fullMatchesByRound: fullMatchesByRound,
                     totalHeight: totalHeight,
                     cardWidth: _cardWidth,
                     cardHeight: _cardHeight,
@@ -240,9 +242,8 @@ class _KnockoutFixtures extends StatelessWidget {
                           context,
                           round: sortedRounds[ri],
                           roundIndex: ri,
-                          matches: matchesByRound[sortedRounds[ri]] ?? [],
-                          r1Count: r1Count,
-                          totalHeight: totalHeight,
+                          realMatches: matchesByRound[sortedRounds[ri]] ?? [],
+                          fullMatches: fullMatchesByRound[sortedRounds[ri]] ?? [],
                           slotHeight: slotHeight,
                         ),
                     ],
@@ -264,22 +265,20 @@ class _KnockoutFixtures extends StatelessWidget {
     BuildContext context, {
     required int round,
     required int roundIndex,
-    required List<Match> matches,
-    required int r1Count,
-    required double totalHeight,
+    required List<Match> realMatches,
+    required List<Match> fullMatches,
     required double slotHeight,
   }) {
-    // Each round has fewer matches. Slots are 2x the previous round's slot size.
     final multiplier = math.pow(2, roundIndex).toInt();
     final thisSlotHeight = slotHeight * multiplier;
-
     final left = roundIndex * (_cardWidth + _roundGap);
 
-    return matches.asMap().entries.map((entry) {
-      final i = entry.key;
-      final match = entry.value;
-      // Centre of this match's slot
-      final top = i * thisSlotHeight + (thisSlotHeight - _cardHeight) / 2;
+    return realMatches.map((match) {
+      // Use the match's absolute index in the FULL round list (including BYEs)
+      // so cards align with connector lines even for non-power-of-2 brackets.
+      final absIdx = fullMatches.indexWhere((m) => m.id == match.id);
+      final effectiveIdx = absIdx >= 0 ? absIdx : 0;
+      final top = effectiveIdx * thisSlotHeight + (thisSlotHeight - _cardHeight) / 2;
 
       return Positioned(
         left: left,
@@ -300,8 +299,7 @@ class _KnockoutFixtures extends StatelessWidget {
 class _BracketLinePainter extends CustomPainter {
   const _BracketLinePainter({
     required this.rounds,
-    required this.matchesByRound,
-    required this.r1Count,
+    required this.fullMatchesByRound,
     required this.totalHeight,
     required this.cardWidth,
     required this.cardHeight,
@@ -311,8 +309,9 @@ class _BracketLinePainter extends CustomPainter {
   });
 
   final List<int> rounds;
-  final Map<int, List<Match>> matchesByRound;
-  final int r1Count;
+  /// Full match lists including BYEs, sorted by matchNumber.
+  /// Used so slot positions are correct for non-power-of-2 brackets.
+  final Map<int, List<Match>> fullMatchesByRound;
   final double totalHeight;
   final double cardWidth;
   final double cardHeight;
@@ -328,8 +327,8 @@ class _BracketLinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     for (var ri = 0; ri < rounds.length - 1; ri++) {
-      final currentMatches = matchesByRound[rounds[ri]] ?? [];
-      final nextMatches = matchesByRound[rounds[ri + 1]] ?? [];
+      final fullCurrent = fullMatchesByRound[rounds[ri]] ?? [];
+      final fullNext = fullMatchesByRound[rounds[ri + 1]] ?? [];
 
       final multiplier = math.pow(2, ri).toInt();
       final currentSlot = slotHeight * multiplier;
@@ -340,22 +339,26 @@ class _BracketLinePainter extends CustomPainter {
       final nextLeft = (ri + 1) * (cardWidth + roundGap);
       final midX = currentLeft + cardWidth + roundGap / 2;
 
-      for (var ni = 0; ni < nextMatches.length; ni++) {
-        // The two current-round matches that feed into next[ni]
-        final srcA = ni * 2;
-        final srcB = ni * 2 + 1;
+      for (var ni = 0; ni < fullNext.length; ni++) {
+        final nextMatch = fullNext[ni];
+        // Skip BYE slots in the next round — no lines needed
+        if (nextMatch.status == MatchStatus.bye) continue;
+
+        // The two slots in current round that feed into fullNext[ni]
+        final srcAIdx = ni * 2;
+        final srcBIdx = ni * 2 + 1;
 
         final nextCenterY = ni * nextSlot + nextSlot / 2;
 
-        if (srcA < currentMatches.length) {
-          final aCenterY = srcA * currentSlot + currentSlot / 2;
-          // Horizontal line out of current match
+        // Source A: draw exit line only if the slot holds a real match
+        if (srcAIdx < fullCurrent.length &&
+            fullCurrent[srcAIdx].status != MatchStatus.bye) {
+          final aCenterY = srcAIdx * currentSlot + currentSlot / 2;
           canvas.drawLine(
             Offset(currentLeft + cardWidth, aCenterY),
             Offset(midX, aCenterY),
             paint,
           );
-          // Vertical line connecting to midpoint
           canvas.drawLine(
             Offset(midX, aCenterY),
             Offset(midX, nextCenterY),
@@ -363,8 +366,10 @@ class _BracketLinePainter extends CustomPainter {
           );
         }
 
-        if (srcB < currentMatches.length) {
-          final bCenterY = srcB * currentSlot + currentSlot / 2;
+        // Source B: draw exit line only if the slot holds a real match
+        if (srcBIdx < fullCurrent.length &&
+            fullCurrent[srcBIdx].status != MatchStatus.bye) {
+          final bCenterY = srcBIdx * currentSlot + currentSlot / 2;
           canvas.drawLine(
             Offset(currentLeft + cardWidth, bCenterY),
             Offset(midX, bCenterY),
@@ -377,7 +382,7 @@ class _BracketLinePainter extends CustomPainter {
           );
         }
 
-        // Horizontal line into next match
+        // Horizontal entry line into the next-round match card
         canvas.drawLine(
           Offset(midX, nextCenterY),
           Offset(nextLeft, nextCenterY),
@@ -389,7 +394,7 @@ class _BracketLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BracketLinePainter old) =>
-      old.rounds != rounds || old.matchesByRound != matchesByRound;
+      old.rounds != rounds || old.fullMatchesByRound != fullMatchesByRound;
 }
 
 // ── Compact bracket match card ────────────────────────────────────────────

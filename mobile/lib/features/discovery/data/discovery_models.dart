@@ -90,6 +90,42 @@ class Venue {
   final String createdAt;
 }
 
+// ── Discovery Tournament ──────────────────────────────────────────────────
+
+class DiscoveryTournament {
+  const DiscoveryTournament({
+    required this.id,
+    required this.title,
+    required this.format,
+    required this.playType,
+    required this.status,
+    this.city,
+    this.startsAt,
+    this.maxParticipants,
+  });
+
+  factory DiscoveryTournament.fromJson(Map<String, dynamic> json) =>
+      DiscoveryTournament(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        format: json['format'] as String,
+        playType: json['play_type'] as String,
+        status: json['status'] as String,
+        city: json['city'] as String?,
+        startsAt: json['starts_at'] as String?,
+        maxParticipants: json['max_participants'] as int?,
+      );
+
+  final String id;
+  final String title;
+  final String format;
+  final String playType;
+  final String status;
+  final String? city;
+  final String? startsAt;
+  final int? maxParticipants;
+}
+
 class VenueCreate {
   const VenueCreate({
     required this.name,

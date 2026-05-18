@@ -7,6 +7,9 @@ import '../../../core/widgets/avatar_widget.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/loading_indicator.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/router/app_router.dart';
 import '../data/discovery_models.dart';
 import '../providers/discovery_provider.dart';
 import 'player_profile_view_screen.dart';
@@ -27,13 +30,19 @@ class _PlayerSearchScreenState extends ConsumerState<PlayerSearchScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
       // Load venues when tab is first selected
       if (_tabController.index == 1 &&
           ref.read(venuesProvider).venues.isEmpty &&
           !ref.read(venuesProvider).isLoading) {
         ref.read(venuesProvider.notifier).load();
+      }
+      // Load open tournaments when Tournaments tab is first selected
+      if (_tabController.index == 2 &&
+          ref.read(discoveryTournamentsProvider).items.isEmpty &&
+          !ref.read(discoveryTournamentsProvider).isLoading) {
+        ref.read(discoveryTournamentsProvider.notifier).load();
       }
     });
     Future.microtask(() => ref.read(discoveryProvider.notifier).init());
@@ -132,6 +141,13 @@ class _PlayerSearchScreenState extends ConsumerState<PlayerSearchScreen>
               tooltip: 'Add venue',
               onPressed: _openAddVenueSheet,
             ),
+          if (_tabController.index == 2)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh',
+              onPressed: () =>
+                  ref.read(discoveryTournamentsProvider.notifier).refresh(),
+            ),
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -139,6 +155,7 @@ class _PlayerSearchScreenState extends ConsumerState<PlayerSearchScreen>
           tabs: const [
             Tab(icon: Icon(Icons.person_search_outlined), text: 'Players'),
             Tab(icon: Icon(Icons.location_on_outlined), text: 'Venues'),
+            Tab(icon: Icon(Icons.emoji_events_outlined), text: 'Tournaments'),
           ],
         ),
       ),
@@ -150,6 +167,7 @@ class _PlayerSearchScreenState extends ConsumerState<PlayerSearchScreen>
             state: discoveryState,
           ),
           const _VenuesTab(),
+          const _DiscoveryTournamentsTab(),
         ],
       ),
     );
@@ -385,6 +403,206 @@ class _VenueChip extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+// ── Discovery Tournaments tab ─────────────────────────────────────────────────
+
+class _DiscoveryTournamentsTab extends ConsumerStatefulWidget {
+  const _DiscoveryTournamentsTab();
+
+  @override
+  ConsumerState<_DiscoveryTournamentsTab> createState() =>
+      _DiscoveryTournamentsTabState();
+}
+
+class _DiscoveryTournamentsTabState
+    extends ConsumerState<_DiscoveryTournamentsTab> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      if (ref.read(discoveryTournamentsProvider).items.isEmpty) {
+        ref.read(discoveryTournamentsProvider.notifier).load();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(discoveryTournamentsProvider);
+
+    if (state.isLoading && state.items.isEmpty) {
+      return const LoadingIndicator();
+    }
+
+    if (state.error != null && state.items.isEmpty) {
+      return ErrorView(
+        message: state.error!,
+        onRetry: () =>
+            ref.read(discoveryTournamentsProvider.notifier).refresh(),
+      );
+    }
+
+    if (state.items.isEmpty) {
+      return const EmptyState(
+        icon: Icons.emoji_events_outlined,
+        title: 'No open tournaments',
+        subtitle: 'No tournaments are currently\nopen for registration.',
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () =>
+          ref.read(discoveryTournamentsProvider.notifier).refresh(),
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        itemCount: state.items.length,
+        itemBuilder: (context, index) =>
+            _DiscoveryTournamentCard(tournament: state.items[index]),
+      ),
+    );
+  }
+}
+
+class _DiscoveryTournamentCard extends StatelessWidget {
+  const _DiscoveryTournamentCard({required this.tournament});
+
+  final DiscoveryTournament tournament;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => context.push(
+          AppRoutes.tournamentDetailPath(tournament.id),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Trophy icon ────────────────────────────────────────────
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child:
+                    const Icon(Icons.emoji_events, color: AppColors.primary),
+              ),
+              const SizedBox(width: 12),
+
+              // ── Info ────────────────────────────────────────────────────
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tournament.title,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        if (tournament.city != null)
+                          _VenueChip(
+                            icon: Icons.location_on_outlined,
+                            label: tournament.city!,
+                          ),
+                        _VenueChip(
+                          icon: Icons.sports_tennis_outlined,
+                          label: _fmtFormat(tournament.format),
+                          color: AppColors.secondary,
+                        ),
+                        _VenueChip(
+                          icon: Icons.people_outline,
+                          label: _fmtPlayType(tournament.playType),
+                        ),
+                        if (tournament.startsAt != null)
+                          _VenueChip(
+                            icon: Icons.calendar_today_outlined,
+                            label: _fmtDate(tournament.startsAt!),
+                            color: AppColors.primary,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Open badge ─────────────────────────────────────────────
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: AppColors.success.withValues(alpha: 0.4)),
+                ),
+                child: const Text(
+                  'Open',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.success,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _fmtFormat(String f) {
+    switch (f) {
+      case 'KNOCKOUT':
+        return 'Knockout';
+      case 'ROUND_ROBIN':
+        return 'Round Robin';
+      default:
+        return f;
+    }
+  }
+
+  static String _fmtPlayType(String pt) {
+    switch (pt) {
+      case 'SINGLES':
+        return 'Singles';
+      case 'DOUBLES':
+        return 'Doubles';
+      case 'MIXED_DOUBLES':
+        return 'Mixed';
+      default:
+        return pt;
+    }
+  }
+
+  static String _fmtDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      return '${dt.day} ${months[dt.month - 1]}';
+    } catch (_) {
+      return iso.substring(0, 10);
+    }
   }
 }
 

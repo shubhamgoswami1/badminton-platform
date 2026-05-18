@@ -5,6 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/storage/token_storage.dart';
 import '../data/auth_repository.dart';
 import '../../profile/data/profile_repository.dart';
+import '../../profile/providers/profile_provider.dart';
+import '../../training/providers/training_provider.dart';
+import '../../training/providers/goals_provider.dart';
+import '../../tournaments/providers/tournament_provider.dart';
+import '../../discovery/providers/discovery_provider.dart'; // discoveryProvider, venuesProvider, discoveryTournamentsProvider
+import '../../matches/providers/match_provider.dart';
+import '../../matches/providers/score_queue_provider.dart';
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -56,14 +63,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required AuthRepository repository,
     required TokenStorage storage,
     required ProfileRepository profileRepository,
+    required Ref ref,
   })  : _repository = repository,
         _storage = storage,
         _profileRepository = profileRepository,
+        _ref = ref,
         super(const AuthState());
 
   final AuthRepository _repository;
   final TokenStorage _storage;
   final ProfileRepository _profileRepository;
+  final Ref _ref;
 
   /// Called on app start — restores session from secure storage into state.
   /// Also checks whether a player profile exists so the router can decide
@@ -156,17 +166,37 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isFirstLogin: false);
   }
 
-  /// Clears tokens from storage and resets auth state.
+  /// Clears tokens from storage, resets auth state, and invalidates all
+  /// user-specific providers so stale data is not shown after re-login.
   Future<void> logout() async {
     final refreshToken = await _storage.getRefreshToken();
     if (refreshToken != null) {
       try {
         await _repository.logout(refreshToken);
       } catch (_) {
-        // Always clear locally.
+        // Always clear locally even if server call fails.
       }
     }
     await _storage.clearTokens();
+
+    // Clear the offline score queue so a new user doesn't inherit old entries.
+    try {
+      await _ref.read(scoreQueueProvider.notifier).clearAll();
+    } catch (_) {}
+
+    // Invalidate all user-specific providers so their data is re-fetched
+    // after the next login.
+    _ref.invalidate(profileProvider);
+    _ref.invalidate(trainingLogsProvider);
+    _ref.invalidate(goalsProvider);
+    _ref.invalidate(myHostedProvider);
+    _ref.invalidate(myJoinedProvider);
+    _ref.invalidate(nearbyTournamentsProvider);
+    _ref.invalidate(discoveryProvider);
+    _ref.invalidate(venuesProvider);
+    _ref.invalidate(discoveryTournamentsProvider);
+    _ref.invalidate(allMatchesProvider);
+
     state = const AuthState();
   }
 
@@ -205,6 +235,7 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
     repository: ref.watch(authRepositoryProvider),
     storage: ref.watch(tokenStorageProvider),
     profileRepository: ref.watch(profileRepositoryProvider),
+    ref: ref,
   );
 });
 

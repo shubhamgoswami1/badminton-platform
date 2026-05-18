@@ -34,6 +34,7 @@ from tournaments.models import Match, MatchScore, Tournament, TournamentParticip
 from training.models import TrainingGoal, TrainingLog  # noqa: F401
 from discovery.models import Venue  # noqa: F401
 from admin.models import AdminLog  # noqa: F401
+from common.models import IdempotencyRecord  # noqa: F401
 
 settings = get_settings()
 
