@@ -18,6 +18,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     phone_number: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
 
 

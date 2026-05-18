@@ -26,6 +26,7 @@ class SubmitScoreRequest(BaseModel):
 
     sets: list[SetScoreInput]
     winner_participant_id: uuid.UUID
+    client_updated_at: Optional[datetime] = None
 
     @field_validator("sets")
     @classmethod
@@ -39,9 +40,16 @@ class UpdateScoreRequest(BaseModel):
     """
     Save intermediate set scores without completing the match.
     Transitions match: PENDING → IN_PROGRESS (if not already).
+
+    client_updated_at — the match.updated_at the client last saw.  When
+    provided, the server enforces "latest timestamp wins": if the server's
+    updated_at is newer, the request is rejected with a STALE_UPDATE conflict
+    so the client can re-sync before retrying.  Omit to skip conflict
+    detection (useful when the client has never fetched the match).
     """
 
     sets: list[SetScoreInput]
+    client_updated_at: Optional[datetime] = None
 
     @field_validator("sets")
     @classmethod
@@ -57,11 +65,15 @@ class CompleteMatchRequest(BaseModel):
     Alternatively accepts fresh sets to replace existing scores.
     Transitions match: PENDING / IN_PROGRESS → COMPLETED.
     Applies Elo to both players (singles only).
+
+    Safe and idempotent: if the match is already COMPLETED with the same
+    winner, returns the current server state (200) rather than an error.
     """
 
     winner_participant_id: uuid.UUID
     # Optional — if supplied, replaces all existing score rows before completing.
     sets: Optional[list[SetScoreInput]] = None
+    client_updated_at: Optional[datetime] = None
 
 
 # ── Output schemas ─────────────────────────────────────────────────────────────
@@ -91,6 +103,10 @@ class MatchDetailResponse(BaseModel):
     """
     Full match detail including metadata, current scores and Elo state.
     Returned by GET /matches/{id} and all mutating endpoints.
+
+    updated_at — server-authoritative write timestamp.  Clients should store
+    this and send it back as client_updated_at on the next mutation to enable
+    conflict detection.
     """
 
     match_id: uuid.UUID
@@ -105,6 +121,7 @@ class MatchDetailResponse(BaseModel):
     version: int
     scheduled_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    updated_at: datetime
     sets: list[SetScoreResponse]
 
 

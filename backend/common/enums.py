@@ -62,6 +62,12 @@ class SessionType(str, Enum):
     REST = "REST"
 
 
+class IntensityLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
 class GoalStatus(str, Enum):
     ACTIVE = "ACTIVE"
     ACHIEVED = "ACHIEVED"

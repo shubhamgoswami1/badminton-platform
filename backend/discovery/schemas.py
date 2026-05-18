@@ -31,6 +31,12 @@ class PlayerDiscoveryResponse(BaseModel):
     skill_level: Optional[str] = None
     play_style: Optional[str] = None
     bio: Optional[str] = None
+    elo_rating: Optional[float] = None
+    matches_played: int = 0
+    wins: int = 0
+    losses: int = 0
+    reliability_score: float = 5.0
+    distance_km: Optional[float] = None
 
     model_config = {"from_attributes": True}
 

@@ -62,3 +62,37 @@ class TooManyRequestsError(AppError):
             code="TOO_MANY_REQUESTS",
             message=message,
         )
+
+
+class SyncConflictError(Exception):
+    """
+    Raised when a client's score update conflicts with the current server state.
+
+    Carries enough server state for the client to resolve the conflict without
+    an extra round-trip.
+
+    conflict_type values
+    ────────────────────
+    STALE_UPDATE      — client_updated_at < match.updated_at; server has a
+                        newer version.  "Latest timestamp wins" rule means this
+                        local update should be discarded.
+    MATCH_COMPLETED   — match is already COMPLETED or WALKOVER on the server;
+                        no further score mutations are permitted.
+    """
+
+    def __init__(
+        self,
+        conflict_type: str,
+        message: str,
+        server_version: int,
+        server_updated_at,  # datetime
+        server_status: str,
+        sets: list,  # list[dict] — current SetScoreResponse dumps
+    ) -> None:
+        super().__init__(message)
+        self.conflict_type = conflict_type
+        self.message = message
+        self.server_version = server_version
+        self.server_updated_at = server_updated_at
+        self.server_status = server_status
+        self.sets = sets

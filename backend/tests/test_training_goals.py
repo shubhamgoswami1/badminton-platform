@@ -105,3 +105,41 @@ async def test_goal_isolation_between_users(client: AsyncClient, db_session: Asy
 async def test_list_goals_unauthenticated(client: AsyncClient):
     r = await client.get("/api/v1/training/goals")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_list_player_goals_returns_target_goals(client: AsyncClient, db_session: AsyncSession):
+    t1 = await _do_full_login(client, PHONE)
+    t2 = await _do_full_login(client, PHONE_2)
+
+    await client.post("/api/v1/training/goals", json=_goal_payload(title="Player 1 goal"), headers={"Authorization": f"Bearer {t1['access_token']}"})
+
+    # Get user_id of t1 from their own list
+    me = (await client.get("/api/v1/training/goals", headers={"Authorization": f"Bearer {t1['access_token']}"})).json()
+    user_id = me["data"][0]["user_id"]
+
+    r = await client.get(f"/api/v1/training/goals/player/{user_id}", headers={"Authorization": f"Bearer {t2['access_token']}"})
+    assert r.status_code == 200
+    items = r.json()["data"]
+    assert any(g["title"] == "Player 1 goal" for g in items)
+
+
+@pytest.mark.asyncio
+async def test_list_player_goals_empty_for_new_user(client: AsyncClient, db_session: AsyncSession):
+    t1 = await _do_full_login(client, PHONE)
+    t2 = await _do_full_login(client, PHONE_2)
+
+    # Get t2's user_id (no goals created)
+    me = (await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {t2['access_token']}"})).json()
+    user_id = me["data"]["id"]
+
+    r = await client.get(f"/api/v1/training/goals/player/{user_id}", headers={"Authorization": f"Bearer {t1['access_token']}"})
+    assert r.status_code == 200
+    assert r.json()["meta"]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_player_goals_unauthenticated(client: AsyncClient, db_session: AsyncSession):
+    import uuid
+    r = await client.get(f"/api/v1/training/goals/player/{uuid.uuid4()}")
+    assert r.status_code == 401
