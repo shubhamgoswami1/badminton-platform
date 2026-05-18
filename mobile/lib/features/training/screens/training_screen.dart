@@ -11,6 +11,7 @@ import '../providers/training_provider.dart';
 import 'add_goal_screen.dart';
 import 'add_log_screen.dart';
 import 'edit_goal_screen.dart';
+import 'edit_log_screen.dart';
 
 class TrainingScreen extends ConsumerStatefulWidget {
   const TrainingScreen({super.key});
@@ -267,21 +268,53 @@ class _WeekStat extends StatelessWidget {
 
 // ── Log card ──────────────────────────────────────────────────────────────────
 
-class _LogCard extends StatelessWidget {
+class _LogCard extends ConsumerWidget {
   const _LogCard({required this.log});
 
   final TrainingLog log;
 
+  Future<void> _openEdit(BuildContext context) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => EditLogScreen(log: log),
+        fullscreenDialog: true,
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete session?'),
+        content: const Text('This log entry will be permanently removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(trainingLogsProvider.notifier).deleteLog(log.id);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final intensityColor = _intensityColor(log.intensity);
+    final isDeleting = ref.watch(trainingLogsProvider).deletingId == log.id;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -310,8 +343,7 @@ class _LogCard extends StatelessWidget {
                     children: [
                       Text(
                         SessionType.label(log.sessionType),
-                        style:
-                            theme.textTheme.titleSmall?.copyWith(
+                        style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -326,14 +358,12 @@ class _LogCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${log.durationMinutes} min  ·  '
-                    '${_formatDate(log.loggedAt)}',
+                    '${log.durationMinutes} min  ·  ${_formatDate(log.loggedAt)}',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: AppColors.onSurfaceVariant,
                     ),
                   ),
-                  if (log.notes != null &&
-                      log.notes!.isNotEmpty) ...[
+                  if (log.notes != null && log.notes!.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Text(
                       log.notes!,
@@ -348,6 +378,32 @@ class _LogCard extends StatelessWidget {
                 ],
               ),
             ),
+
+            // ── Actions ───────────────────────────────────────────────
+            if (isDeleting)
+              const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 18, color: AppColors.onSurfaceVariant),
+                onSelected: (v) {
+                  if (v == 'edit') _openEdit(context);
+                  if (v == 'delete') _confirmDelete(context, ref);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit')),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete', style: TextStyle(color: AppColors.error)),
+                  ),
+                ],
+              ),
           ],
         ),
       ),

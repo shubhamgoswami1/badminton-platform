@@ -177,3 +177,92 @@ final discoveryProvider =
     StateNotifierProvider<DiscoveryNotifier, DiscoveryState>(
   (ref) => DiscoveryNotifier(ref.watch(discoveryRepositoryProvider)),
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Venues Provider
+// ─────────────────────────────────────────────────────────────────────────────
+
+class VenuesState {
+  const VenuesState({
+    this.venues = const [],
+    this.isLoading = false,
+    this.error,
+    this.isSubmitting = false,
+    this.submitError,
+    this.submitted = false,
+  });
+
+  final List<Venue> venues;
+  final bool isLoading;
+  final String? error;
+  final bool isSubmitting;
+  final String? submitError;
+  final bool submitted;
+
+  VenuesState copyWith({
+    List<Venue>? venues,
+    bool? isLoading,
+    String? error,
+    bool clearError = false,
+    bool? isSubmitting,
+    String? submitError,
+    bool clearSubmitError = false,
+    bool? submitted,
+  }) =>
+      VenuesState(
+        venues: venues ?? this.venues,
+        isLoading: isLoading ?? this.isLoading,
+        error: clearError ? null : (error ?? this.error),
+        isSubmitting: isSubmitting ?? this.isSubmitting,
+        submitError: clearSubmitError ? null : (submitError ?? this.submitError),
+        submitted: submitted ?? this.submitted,
+      );
+}
+
+class VenuesNotifier extends StateNotifier<VenuesState> {
+  VenuesNotifier(this._repo) : super(const VenuesState());
+
+  final DiscoveryRepository _repo;
+
+  Future<void> load() async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final venues = await _repo.getVenues();
+      state = state.copyWith(isLoading: false, venues: venues);
+    } catch (_) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Could not load venues. Please try again.',
+      );
+    }
+  }
+
+  Future<bool> submit(VenueCreate data) async {
+    state = state.copyWith(
+      isSubmitting: true,
+      clearSubmitError: true,
+      submitted: false,
+    );
+    try {
+      final venue = await _repo.submitVenue(data);
+      state = state.copyWith(
+        isSubmitting: false,
+        submitted: true,
+        venues: [venue, ...state.venues],
+      );
+      return true;
+    } catch (_) {
+      state = state.copyWith(
+        isSubmitting: false,
+        submitError: 'Could not submit venue. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  void resetSubmitted() => state = state.copyWith(submitted: false);
+}
+
+final venuesProvider = StateNotifierProvider<VenuesNotifier, VenuesState>(
+  (ref) => VenuesNotifier(ref.watch(discoveryRepositoryProvider)),
+);

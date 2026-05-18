@@ -6,15 +6,15 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Input schemas ──────────────────────────────────────────────────────────────
 
 class SetScoreInput(BaseModel):
-    set_number: int
-    side_a_score: int
-    side_b_score: int
+    set_number: int = Field(ge=1)
+    side_a_score: int = Field(ge=0)
+    side_b_score: int = Field(ge=0)
 
 
 class SubmitScoreRequest(BaseModel):

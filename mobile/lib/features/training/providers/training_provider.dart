@@ -12,33 +12,41 @@ class TrainingLogsState {
     this.logs = const [],
     this.isLoading = false,
     this.isSubmitting = false,
+    this.deletingId,
     this.error,
     this.submitError,
+    this.deleteError,
   });
 
   final List<TrainingLog> logs;
   final bool isLoading;
   final bool isSubmitting;
+  final String? deletingId;
   final String? error;
   final String? submitError;
+  final String? deleteError;
 
   TrainingLogsState copyWith({
     List<TrainingLog>? logs,
     bool? isLoading,
     bool? isSubmitting,
+    String? deletingId,
     String? error,
     String? submitError,
+    String? deleteError,
+    bool clearDeletingId = false,
     bool clearError = false,
     bool clearSubmitError = false,
+    bool clearDeleteError = false,
   }) =>
       TrainingLogsState(
         logs: logs ?? this.logs,
         isLoading: isLoading ?? this.isLoading,
         isSubmitting: isSubmitting ?? this.isSubmitting,
+        deletingId: clearDeletingId ? null : (deletingId ?? this.deletingId),
         error: clearError ? null : (error ?? this.error),
-        submitError: clearSubmitError
-            ? null
-            : (submitError ?? this.submitError),
+        submitError: clearSubmitError ? null : (submitError ?? this.submitError),
+        deleteError: clearDeleteError ? null : (deleteError ?? this.deleteError),
       );
 
   // ── Derived stats for the weekly summary card ──────────────────────────
@@ -120,11 +128,9 @@ class TrainingLogsNotifier extends StateNotifier<TrainingLogsState> {
 
   /// Returns true on success, false on error (error stored in submitError).
   Future<bool> addLog(TrainingLogCreate request) async {
-    state =
-        state.copyWith(isSubmitting: true, clearSubmitError: true);
+    state = state.copyWith(isSubmitting: true, clearSubmitError: true);
     try {
       final created = await _repo.createLog(request);
-      // Prepend to the list without a full reload.
       state = state.copyWith(
         isSubmitting: false,
         logs: [created, ...state.logs],
@@ -139,8 +145,44 @@ class TrainingLogsNotifier extends StateNotifier<TrainingLogsState> {
     }
   }
 
-  void clearSubmitError() =>
-      state = state.copyWith(clearSubmitError: true);
+  Future<bool> updateLog(String id, TrainingLogCreate request) async {
+    state = state.copyWith(isSubmitting: true, clearSubmitError: true);
+    try {
+      final updated = await _repo.updateLog(id, request);
+      state = state.copyWith(
+        isSubmitting: false,
+        logs: state.logs.map((l) => l.id == id ? updated : l).toList(),
+      );
+      return true;
+    } catch (_) {
+      state = state.copyWith(
+        isSubmitting: false,
+        submitError: 'Could not update log. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> deleteLog(String id) async {
+    state = state.copyWith(deletingId: id, clearDeleteError: true);
+    try {
+      await _repo.deleteLog(id);
+      state = state.copyWith(
+        logs: state.logs.where((l) => l.id != id).toList(),
+        clearDeletingId: true,
+      );
+      return true;
+    } catch (_) {
+      state = state.copyWith(
+        clearDeletingId: true,
+        deleteError: 'Could not delete log. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  void clearSubmitError() => state = state.copyWith(clearSubmitError: true);
+  void clearDeleteError() => state = state.copyWith(clearDeleteError: true);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

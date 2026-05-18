@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -138,7 +140,7 @@ class _FixturesTab extends ConsumerWidget {
   }
 }
 
-// ── Knockout: grouped by round with round labels ──────────────────────────
+// ── Knockout: visual bracket tree view ───────────────────────────────────
 
 class _KnockoutFixtures extends StatelessWidget {
   const _KnockoutFixtures({
@@ -149,31 +151,441 @@ class _KnockoutFixtures extends StatelessWidget {
   final TournamentFixturesState state;
   final Tournament tournament;
 
+  static const _cardWidth = 160.0;
+  static const _cardHeight = 72.0;
+  static const _roundGap = 40.0;  // horizontal gap between rounds
+  static const _lineColor = AppColors.outline;
+
   @override
   Widget build(BuildContext context) {
     final byRound = state.byRound;
     final maxRound = state.maxRound;
     final sortedRounds = byRound.keys.toList()..sort();
 
+    // Compute how many slots are in round 1 (always the largest round)
+    final r1Matches = (byRound[sortedRounds.first] ?? [])
+        .where((m) => m.status != MatchStatus.bye)
+        .toList()
+      ..sort((a, b) => a.matchNumber.compareTo(b.matchNumber));
+
+    // Each slot height = card height + vertical gap
+    const slotHeight = _cardHeight + 24.0;
+    final r1Count = r1Matches.length;
+    // Total bracket height fits all round-1 slots
+    final totalHeight = math.max(r1Count * slotHeight, slotHeight * 2);
+
+    // Build ordered match lists per round (sorted by matchNumber)
+    final matchesByRound = {
+      for (final r in sortedRounds)
+        r: (byRound[r] ?? [])
+            .where((m) => m.status != MatchStatus.bye)
+            .toList()
+          ..sort((a, b) => a.matchNumber.compareTo(b.matchNumber)),
+    };
+
+    final bracketWidth = sortedRounds.length * (_cardWidth + _roundGap) + 16;
+
     return RefreshIndicator(
       onRefresh: () async {},
-      child: ListView.builder(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
-        itemCount: sortedRounds.length,
-        itemBuilder: (context, i) {
-          final round = sortedRounds[i];
-          final matches = byRound[round]!
-              .where((m) => m.status != MatchStatus.bye)
-              .toList();
-          if (matches.isEmpty) return const SizedBox.shrink();
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Round labels row ──────────────────────────────────────
+            SizedBox(
+              width: bracketWidth,
+              child: Row(
+                children: sortedRounds.map((r) {
+                  return SizedBox(
+                    width: _cardWidth + _roundGap,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _knockoutRoundLabel(r, maxRound),
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
 
-          return _RoundSection(
-            label: _knockoutRoundLabel(round, maxRound),
-            matches: matches,
-            tournament: tournament,
-          );
-        },
+            // ── Bracket grid ───────────────────────────────────────────
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: bracketWidth,
+                height: totalHeight,
+                child: CustomPaint(
+                  painter: _BracketLinePainter(
+                    rounds: sortedRounds,
+                    matchesByRound: matchesByRound,
+                    r1Count: r1Count,
+                    totalHeight: totalHeight,
+                    cardWidth: _cardWidth,
+                    cardHeight: _cardHeight,
+                    roundGap: _roundGap,
+                    slotHeight: slotHeight,
+                    lineColor: _lineColor,
+                  ),
+                  child: Stack(
+                    children: [
+                      for (var ri = 0; ri < sortedRounds.length; ri++)
+                        ..._buildRoundCards(
+                          context,
+                          round: sortedRounds[ri],
+                          roundIndex: ri,
+                          matches: matchesByRound[sortedRounds[ri]] ?? [],
+                          r1Count: r1Count,
+                          totalHeight: totalHeight,
+                          slotHeight: slotHeight,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Legend ────────────────────────────────────────────────
+            const SizedBox(height: 16),
+            _BracketLegend(tournament: tournament),
+          ],
+        ),
       ),
+    );
+  }
+
+  List<Widget> _buildRoundCards(
+    BuildContext context, {
+    required int round,
+    required int roundIndex,
+    required List<Match> matches,
+    required int r1Count,
+    required double totalHeight,
+    required double slotHeight,
+  }) {
+    // Each round has fewer matches. Slots are 2x the previous round's slot size.
+    final multiplier = math.pow(2, roundIndex).toInt();
+    final thisSlotHeight = slotHeight * multiplier;
+
+    final left = roundIndex * (_cardWidth + _roundGap);
+
+    return matches.asMap().entries.map((entry) {
+      final i = entry.key;
+      final match = entry.value;
+      // Centre of this match's slot
+      final top = i * thisSlotHeight + (thisSlotHeight - _cardHeight) / 2;
+
+      return Positioned(
+        left: left,
+        top: top,
+        width: _cardWidth,
+        height: _cardHeight,
+        child: _BracketMatchCard(
+          match: match,
+          tournament: tournament,
+        ),
+      );
+    }).toList();
+  }
+}
+
+// ── Bracket line painter ──────────────────────────────────────────────────
+
+class _BracketLinePainter extends CustomPainter {
+  const _BracketLinePainter({
+    required this.rounds,
+    required this.matchesByRound,
+    required this.r1Count,
+    required this.totalHeight,
+    required this.cardWidth,
+    required this.cardHeight,
+    required this.roundGap,
+    required this.slotHeight,
+    required this.lineColor,
+  });
+
+  final List<int> rounds;
+  final Map<int, List<Match>> matchesByRound;
+  final int r1Count;
+  final double totalHeight;
+  final double cardWidth;
+  final double cardHeight;
+  final double roundGap;
+  final double slotHeight;
+  final Color lineColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = lineColor
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    for (var ri = 0; ri < rounds.length - 1; ri++) {
+      final currentMatches = matchesByRound[rounds[ri]] ?? [];
+      final nextMatches = matchesByRound[rounds[ri + 1]] ?? [];
+
+      final multiplier = math.pow(2, ri).toInt();
+      final currentSlot = slotHeight * multiplier;
+      final nextMultiplier = math.pow(2, ri + 1).toInt();
+      final nextSlot = slotHeight * nextMultiplier;
+
+      final currentLeft = ri * (cardWidth + roundGap);
+      final nextLeft = (ri + 1) * (cardWidth + roundGap);
+      final midX = currentLeft + cardWidth + roundGap / 2;
+
+      for (var ni = 0; ni < nextMatches.length; ni++) {
+        // The two current-round matches that feed into next[ni]
+        final srcA = ni * 2;
+        final srcB = ni * 2 + 1;
+
+        final nextCenterY = ni * nextSlot + nextSlot / 2;
+
+        if (srcA < currentMatches.length) {
+          final aCenterY = srcA * currentSlot + currentSlot / 2;
+          // Horizontal line out of current match
+          canvas.drawLine(
+            Offset(currentLeft + cardWidth, aCenterY),
+            Offset(midX, aCenterY),
+            paint,
+          );
+          // Vertical line connecting to midpoint
+          canvas.drawLine(
+            Offset(midX, aCenterY),
+            Offset(midX, nextCenterY),
+            paint,
+          );
+        }
+
+        if (srcB < currentMatches.length) {
+          final bCenterY = srcB * currentSlot + currentSlot / 2;
+          canvas.drawLine(
+            Offset(currentLeft + cardWidth, bCenterY),
+            Offset(midX, bCenterY),
+            paint,
+          );
+          canvas.drawLine(
+            Offset(midX, bCenterY),
+            Offset(midX, nextCenterY),
+            paint,
+          );
+        }
+
+        // Horizontal line into next match
+        canvas.drawLine(
+          Offset(midX, nextCenterY),
+          Offset(nextLeft, nextCenterY),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BracketLinePainter old) =>
+      old.rounds != rounds || old.matchesByRound != matchesByRound;
+}
+
+// ── Compact bracket match card ────────────────────────────────────────────
+
+class _BracketMatchCard extends StatelessWidget {
+  const _BracketMatchCard({required this.match, required this.tournament});
+
+  final Match match;
+  final Tournament tournament;
+
+  @override
+  Widget build(BuildContext context) {
+    final sideAWon = match.winnerParticipantId != null &&
+        match.winnerParticipantId == match.sideAParticipantId;
+    final sideBWon = match.winnerParticipantId != null &&
+        match.winnerParticipantId == match.sideBParticipantId;
+    final statusColor = _matchStatusColor(match.status);
+
+    return GestureDetector(
+      onTap: () => context.push(
+        AppRoutes.matchDetailPath(match.id),
+        extra: MatchWithContext(
+          match: match,
+          tournamentTitle: tournament.title,
+          organiserId: tournament.organiserId,
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: statusColor.withValues(alpha: 0.4),
+            width: 1.5,
+          ),
+          color: Theme.of(context).colorScheme.surface,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // ── Status bar ─────────────────────────────────────
+            Container(
+              height: 4,
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.7),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(7)),
+              ),
+            ),
+            // ── Side A ─────────────────────────────────────────
+            Expanded(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: sideAWon
+                      ? AppColors.primary.withValues(alpha: 0.08)
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    if (sideAWon)
+                      const Icon(Icons.emoji_events,
+                          size: 12, color: AppColors.warning)
+                    else
+                      const SizedBox(width: 12),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        match.sideAParticipantId != null
+                            ? match.sideAParticipantId!.substring(0, 8)
+                            : 'TBD',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: sideAWon
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: sideAWon
+                              ? AppColors.primary
+                              : match.sideAParticipantId != null
+                                  ? AppColors.onSurface
+                                  : AppColors.disabled,
+                          fontFamily: match.sideAParticipantId != null
+                              ? 'monospace'
+                              : null,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // ── Divider ────────────────────────────────────────
+            const Divider(height: 1, thickness: 0.5),
+            // ── Side B ─────────────────────────────────────────
+            Expanded(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: sideBWon
+                      ? AppColors.primary.withValues(alpha: 0.08)
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    if (sideBWon)
+                      const Icon(Icons.emoji_events,
+                          size: 12, color: AppColors.warning)
+                    else
+                      const SizedBox(width: 12),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        match.sideBParticipantId != null
+                            ? match.sideBParticipantId!.substring(0, 8)
+                            : 'TBD',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: sideBWon
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: sideBWon
+                              ? AppColors.primary
+                              : match.sideBParticipantId != null
+                                  ? AppColors.onSurface
+                                  : AppColors.disabled,
+                          fontFamily: match.sideBParticipantId != null
+                              ? 'monospace'
+                              : null,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Bracket legend ────────────────────────────────────────────────────────
+
+class _BracketLegend extends StatelessWidget {
+  const _BracketLegend({required this.tournament});
+
+  final Tournament tournament;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 8,
+      children: [
+        _LegendDot(color: _matchStatusColor(MatchStatus.pending), label: 'Pending'),
+        _LegendDot(color: _matchStatusColor(MatchStatus.inProgress), label: 'In Progress'),
+        _LegendDot(color: _matchStatusColor(MatchStatus.completed), label: 'Completed'),
+        _LegendDot(color: _matchStatusColor(MatchStatus.walkover), label: 'Walkover'),
+      ],
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label,
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: AppColors.onSurfaceVariant)),
+      ],
     );
   }
 }

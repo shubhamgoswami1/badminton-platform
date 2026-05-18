@@ -22,12 +22,17 @@ class OtpScreen extends ConsumerStatefulWidget {
 class _OtpScreenState extends ConsumerState<OtpScreen> {
   static const _otpLength = 6;
   static const _resendCooldown = 60;
+  static const _rateLimitCooldown = 120; // extended cooldown after 429
 
   final _controllers = List.generate(_otpLength, (_) => TextEditingController());
   final _focusNodes = List.generate(_otpLength, (_) => FocusNode());
 
   int _secondsLeft = _resendCooldown;
   Timer? _timer;
+
+  // Rate-limit state for the verify button (server-side 429)
+  bool _verifyRateLimited = false;
+  Timer? _rateLimitTimer;
 
   @override
   void initState() {
@@ -38,6 +43,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _rateLimitTimer?.cancel();
     for (final c in _controllers) { c.dispose(); }
     for (final f in _focusNodes) { f.dispose(); }
     super.dispose();
@@ -88,6 +94,14 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     if (_otp.length == _otpLength) _submit();
   }
 
+  void _startRateLimitCooldown() {
+    _rateLimitTimer?.cancel();
+    if (mounted) setState(() => _verifyRateLimited = true);
+    _rateLimitTimer = Timer(const Duration(seconds: _rateLimitCooldown), () {
+      if (mounted) setState(() => _verifyRateLimited = false);
+    });
+  }
+
   Future<void> _submit() async {
     if (_otp.length < _otpLength) return;
     FocusScope.of(context).unfocus();
@@ -101,6 +115,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     } catch (_) {
       // Error in state — shake and clear OTP.
       _clearOtp();
+      // If the server rate-limited us, block verify for the cooldown period.
+      if (ref.read(authProvider).error?.contains('Too many') == true) {
+        _startRateLimitCooldown();
+      }
     }
   }
 
@@ -116,7 +134,20 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     try {
       await ref.read(authProvider.notifier).requestOtp(widget.phoneNumber);
       _startTimer();
-    } catch (_) {}
+    } catch (_) {
+      // On 429, restart with an extended cooldown.
+      if (ref.read(authProvider).error?.contains('Too many') == true) {
+        _timer?.cancel();
+        setState(() => _secondsLeft = _rateLimitCooldown);
+        _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+          if (_secondsLeft <= 0) {
+            t.cancel();
+          } else {
+            setState(() => _secondsLeft--);
+          }
+        });
+      }
+    }
   }
 
   @override
@@ -125,6 +156,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     final auth = ref.watch(authProvider);
     final canResend = _secondsLeft == 0 && !auth.isLoading;
     final otpFilled = _otp.length == _otpLength;
+    final canVerify = otpFilled && !auth.isLoading && !_verifyRateLimited;
 
     return Scaffold(
       appBar: AppBar(
@@ -192,9 +224,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
               const SizedBox(height: 28),
 
               AppButton(
-                label: 'Verify',
+                label: _verifyRateLimited ? 'Too many attempts — please wait' : 'Verify',
                 isLoading: auth.isLoading,
-                onPressed: (otpFilled && !auth.isLoading) ? _submit : null,
+                onPressed: canVerify ? _submit : null,
               ),
 
               const SizedBox(height: 20),

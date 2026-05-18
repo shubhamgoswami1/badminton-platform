@@ -220,3 +220,97 @@ async def test_tournament_completion_after_all_matches(client: AsyncClient, db_s
 
     t_r = await client.get(f"/api/v1/tournaments/{tid}", headers={"Authorization": f"Bearer {org_token}"})
     assert t_r.json()["data"]["status"] == "IN_PROGRESS"
+
+
+# ── Additional coverage cases ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_submit_score_by_non_participant_forbidden(client: AsyncClient, db_session: AsyncSession):
+    """A user who is neither organiser nor match participant receives 403."""
+    tid, org_token, match, _ = await _setup_match(client)
+    outsider = await _do_full_login(client, "+915000099901")
+    winner = match["side_a_participant_id"]
+
+    r = await client.post(
+        f"/api/v1/matches/{match['id']}/score",
+        json=_score_payload(winner),
+        headers={"Authorization": f"Bearer {outsider['access_token']}"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bo3_three_sets_correct_winner(client: AsyncClient, db_session: AsyncSession):
+    """BO3 where both sides win one set — third set determines correct winner."""
+    tid, org_token, match, _ = await _setup_match(client)  # tournament is BEST_OF_3
+
+    side_a = match["side_a_participant_id"]
+    side_b = match["side_b_participant_id"]
+
+    # Side A wins set 1, Side B wins set 2, Side B wins set 3 — side B is winner.
+    payload = {
+        "sets": [
+            {"set_number": 1, "side_a_score": 21, "side_b_score": 15},
+            {"set_number": 2, "side_a_score": 14, "side_b_score": 21},
+            {"set_number": 3, "side_a_score": 18, "side_b_score": 21},
+        ],
+        "winner_participant_id": side_b,
+    }
+
+    r = await client.post(
+        f"/api/v1/matches/{match['id']}/score",
+        json=payload,
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["status"] == "COMPLETED"
+    assert data["winner_participant_id"] == side_b
+    assert len(data["sets"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_submit_score_negative_score_rejected(client: AsyncClient, db_session: AsyncSession):
+    """Negative scores in a set must be rejected with 422."""
+    tid, org_token, match, _ = await _setup_match(client)
+    winner = match["side_a_participant_id"]
+
+    payload = {
+        "sets": [
+            {"set_number": 1, "side_a_score": -5, "side_b_score": 21},
+        ],
+        "winner_participant_id": winner,
+    }
+
+    r = await client.post(
+        f"/api/v1/matches/{match['id']}/score",
+        json=payload,
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_submit_score_side_b_winner(client: AsyncClient, db_session: AsyncSession):
+    """Organiser submits score where side B wins — winner recorded correctly."""
+    tid, org_token, match, _ = await _setup_match(client)
+    winner = match["side_b_participant_id"]
+
+    payload = {
+        "sets": [
+            {"set_number": 1, "side_a_score": 15, "side_b_score": 21},
+            {"set_number": 2, "side_a_score": 18, "side_b_score": 21},
+        ],
+        "winner_participant_id": winner,
+    }
+
+    r = await client.post(
+        f"/api/v1/matches/{match['id']}/score",
+        json=payload,
+        headers={"Authorization": f"Bearer {org_token}"},
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["status"] == "COMPLETED"
+    assert data["winner_participant_id"] == winner

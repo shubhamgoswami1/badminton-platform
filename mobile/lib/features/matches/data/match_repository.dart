@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -74,13 +76,18 @@ class MatchRepository {
   }
 
   /// One-shot submit: sets + winner → COMPLETED.
+  ///
+  /// An [Idempotency-Key] header is automatically generated and sent with every
+  /// POST so that network retries don't double-submit the score.
   Future<MatchDetail> submitScore(
     String matchId,
     SubmitScoreRequest request,
   ) async {
+    final idempotencyKey = _generateKey();
     final response = await _dio.post(
       ApiEndpoints.matchScore(matchId),
       data: request.toJson(),
+      options: Options(headers: {'Idempotency-Key': idempotencyKey}),
     );
     // /score returns a MatchScoreResponse shape (match_id, status, sets).
     // Fallback: re-fetch via detail endpoint for full MatchDetail.
@@ -95,3 +102,10 @@ class MatchRepository {
 final matchRepositoryProvider = Provider<MatchRepository>((ref) {
   return MatchRepository(ref.watch(dioClientProvider));
 });
+
+/// Simple random hex key — unique enough for idempotency within a session.
+String _generateKey() {
+  final rng = Random.secure();
+  final bytes = List<int>.generate(16, (_) => rng.nextInt(256));
+  return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}

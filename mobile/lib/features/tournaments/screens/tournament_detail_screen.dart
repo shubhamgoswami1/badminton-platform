@@ -10,6 +10,7 @@ import '../../../core/widgets/loading_indicator.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../data/tournament_models.dart';
 import '../providers/tournament_provider.dart';
+import 'edit_tournament_screen.dart';
 
 class TournamentDetailScreen extends ConsumerStatefulWidget {
   const TournamentDetailScreen({super.key, required this.tournamentId});
@@ -100,15 +101,53 @@ class _TournamentDetailScreenState
               .read(tournamentDetailProvider(widget.tournamentId).notifier)
               .clearStartError();
         }
+        if (prev?.transitionError == null && next.transitionError != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(next.transitionError!),
+              backgroundColor: AppColors.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+          ref
+              .read(tournamentDetailProvider(widget.tournamentId).notifier)
+              .clearTransitionError();
+        }
       },
     );
+
+    final t = detailState.tournament;
+    final userId = ref.watch(authProvider).userId;
+    final isOrganiser = t != null && userId != null && t.organiserId == userId;
+    final canEdit = isOrganiser &&
+        (t.status == TournamentStatus.draft ||
+            t.status == TournamentStatus.registrationOpen);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          detailState.tournament?.title ?? 'Tournament',
+          t?.title ?? 'Tournament',
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          if (canEdit)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit tournament',
+              onPressed: () async {
+                final updated = await Navigator.of(context).push<bool>(
+                  MaterialPageRoute(
+                    builder: (_) => EditTournamentScreen(tournament: t),
+                  ),
+                );
+                if (updated == true && mounted) {
+                  ref
+                      .read(tournamentDetailProvider(widget.tournamentId).notifier)
+                      .reload();
+                }
+              },
+            ),
+        ],
       ),
       body: _buildBody(context, detailState),
     );
@@ -133,6 +172,7 @@ class _TournamentDetailScreenState
 
     final userId = ref.watch(authProvider).userId;
     final isOrganiser = userId != null && t.organiserId == userId;
+    final isTransitioning = state.isTransitioning;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -148,7 +188,23 @@ class _TournamentDetailScreenState
               tournament: t,
               tournamentId: widget.tournamentId,
               isStarting: state.isStarting,
+              isTransitioning: isTransitioning,
               onStart: _handleStart,
+              onTransition: (nextStatus) async {
+                final messenger = ScaffoldMessenger.of(context);
+                final ok = await ref
+                    .read(tournamentDetailProvider(widget.tournamentId).notifier)
+                    .transitionStatus(nextStatus);
+                if (ok && mounted) {
+                  ref.read(myHostedProvider.notifier).reload();
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('Status updated!'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              },
             ),
             const SizedBox(height: 16),
           ],
@@ -277,13 +333,17 @@ class _HostDashboard extends ConsumerStatefulWidget {
     required this.tournament,
     required this.tournamentId,
     required this.isStarting,
+    required this.isTransitioning,
     required this.onStart,
+    required this.onTransition,
   });
 
   final Tournament tournament;
   final String tournamentId;
   final bool isStarting;
+  final bool isTransitioning;
   final VoidCallback onStart;
+  final void Function(String nextStatus) onTransition;
 
   @override
   ConsumerState<_HostDashboard> createState() => _HostDashboardState();
@@ -350,11 +410,6 @@ class _HostDashboardState extends ConsumerState<_HostDashboard> {
   Widget build(BuildContext context) {
     final pState = ref.watch(participantsProvider(widget.tournamentId));
     final t = widget.tournament;
-
-    final canStart = (t.status == TournamentStatus.registrationOpen ||
-            t.status == TournamentStatus.registrationClosed) &&
-        !t.isInProgress &&
-        !t.isCompleted;
 
     final activeCount = pState.active.length;
     final hasEnough = activeCount >= 4;
@@ -471,8 +526,46 @@ class _HostDashboardState extends ConsumerState<_HostDashboard> {
 
         const SizedBox(height: 16),
 
-        // ── Start button ─────────────────────────────────────────────
-        if (canStart) ...[
+        // ── Lifecycle action buttons ─────────────────────────────────
+        if (t.status == TournamentStatus.draft) ...[
+          SizedBox(
+            width: double.infinity,
+            child: AppButton(
+              label: 'Open Registration',
+              icon: Icons.how_to_reg_outlined,
+              isLoading: widget.isTransitioning,
+              onPressed: widget.isTransitioning
+                  ? null
+                  : () => widget.onTransition(TournamentStatus.registrationOpen),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _CancelButton(
+            isLoading: widget.isTransitioning,
+            onPressed: () => widget.onTransition(TournamentStatus.cancelled),
+          ),
+        ],
+
+        if (t.status == TournamentStatus.registrationOpen) ...[
+          SizedBox(
+            width: double.infinity,
+            child: AppButton(
+              label: 'Close Registration',
+              icon: Icons.lock_outline,
+              isLoading: widget.isTransitioning,
+              onPressed: widget.isTransitioning
+                  ? null
+                  : () => widget.onTransition(TournamentStatus.registrationClosed),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _CancelButton(
+            isLoading: widget.isTransitioning,
+            onPressed: () => widget.onTransition(TournamentStatus.cancelled),
+          ),
+        ],
+
+        if (t.status == TournamentStatus.registrationClosed) ...[
           if (!hasEnough)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -481,10 +574,11 @@ class _HostDashboardState extends ConsumerState<_HostDashboard> {
                   const Icon(Icons.warning_amber_outlined,
                       size: 16, color: AppColors.warning),
                   const SizedBox(width: 6),
-                  Text(
-                    'Need at least 4 participants to start (${4 - activeCount} more needed).',
-                    style: const TextStyle(
-                        color: AppColors.warning, fontSize: 13),
+                  Expanded(
+                    child: Text(
+                      'Need at least 4 participants (${4 - activeCount} more needed).',
+                      style: const TextStyle(color: AppColors.warning, fontSize: 13),
+                    ),
                   ),
                 ],
               ),
@@ -497,6 +591,11 @@ class _HostDashboardState extends ConsumerState<_HostDashboard> {
               isLoading: widget.isStarting,
               onPressed: hasEnough ? widget.onStart : null,
             ),
+          ),
+          const SizedBox(height: 8),
+          _CancelButton(
+            isLoading: widget.isTransitioning,
+            onPressed: () => widget.onTransition(TournamentStatus.cancelled),
           ),
         ],
 
@@ -512,6 +611,13 @@ class _HostDashboardState extends ConsumerState<_HostDashboard> {
             icon: Icons.emoji_events_outlined,
             message: 'Tournament completed',
             color: AppColors.statusCompleted,
+          ),
+
+        if (t.status == TournamentStatus.cancelled)
+          const _StatusBanner(
+            icon: Icons.cancel_outlined,
+            message: 'Tournament cancelled',
+            color: AppColors.error,
           ),
       ],
     );
@@ -655,6 +761,35 @@ class _StatChip extends StatelessWidget {
 }
 
 // ── Status banner (reused for organiser + player feedback) ─────────────────
+
+class _CancelButton extends StatelessWidget {
+  const _CancelButton({required this.isLoading, required this.onPressed});
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        icon: isLoading
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.error),
+              )
+            : const Icon(Icons.cancel_outlined, color: AppColors.error),
+        label: const Text('Cancel Tournament',
+            style: TextStyle(color: AppColors.error)),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: AppColors.error),
+        ),
+        onPressed: isLoading ? null : onPressed,
+      ),
+    );
+  }
+}
 
 class _StatusBanner extends StatelessWidget {
   const _StatusBanner({

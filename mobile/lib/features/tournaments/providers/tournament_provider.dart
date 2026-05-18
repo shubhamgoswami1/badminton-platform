@@ -302,9 +302,11 @@ class TournamentDetailState {
     this.isJoining = false,
     this.hasJoined = false,
     this.isStarting = false,
+    this.isTransitioning = false,
     this.error,
     this.joinError,
     this.startError,
+    this.transitionError,
   });
 
   final Tournament? tournament;
@@ -312,9 +314,11 @@ class TournamentDetailState {
   final bool isJoining;
   final bool hasJoined;
   final bool isStarting;
+  final bool isTransitioning;
   final String? error;
   final String? joinError;
   final String? startError;
+  final String? transitionError;
 
   TournamentDetailState copyWith({
     Tournament? tournament,
@@ -322,12 +326,15 @@ class TournamentDetailState {
     bool? isJoining,
     bool? hasJoined,
     bool? isStarting,
+    bool? isTransitioning,
     String? error,
     String? joinError,
     String? startError,
+    String? transitionError,
     bool clearError = false,
     bool clearJoinError = false,
     bool clearStartError = false,
+    bool clearTransitionError = false,
   }) =>
       TournamentDetailState(
         tournament: tournament ?? this.tournament,
@@ -335,9 +342,13 @@ class TournamentDetailState {
         isJoining: isJoining ?? this.isJoining,
         hasJoined: hasJoined ?? this.hasJoined,
         isStarting: isStarting ?? this.isStarting,
+        isTransitioning: isTransitioning ?? this.isTransitioning,
         error: clearError ? null : (error ?? this.error),
         joinError: clearJoinError ? null : (joinError ?? this.joinError),
         startError: clearStartError ? null : (startError ?? this.startError),
+        transitionError: clearTransitionError
+            ? null
+            : (transitionError ?? this.transitionError),
       );
 }
 
@@ -395,8 +406,41 @@ class TournamentDetailNotifier
     }
   }
 
+  Future<bool> transitionStatus(String nextStatus) async {
+    state = state.copyWith(isTransitioning: true, clearTransitionError: true);
+    try {
+      final t = await _repo.transitionStatus(_id, nextStatus);
+      state = state.copyWith(isTransitioning: false, tournament: t);
+      return true;
+    } catch (e) {
+      final msg = _backendMessage(e, 'Could not update tournament status.');
+      state = state.copyWith(isTransitioning: false, transitionError: msg);
+      return false;
+    }
+  }
+
+  Future<bool> updateTournament(CreateTournamentRequest req) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final t = await _repo.updateTournament(_id, req);
+      state = state.copyWith(isLoading: false, tournament: t);
+      return true;
+    } catch (e) {
+      final msg = _backendMessage(e, 'Could not update tournament.');
+      state = state.copyWith(isLoading: false, error: msg);
+      return false;
+    }
+  }
+
+  void reload() {
+    state = const TournamentDetailState();
+    load();
+  }
+
   void clearJoinError() => state = state.copyWith(clearJoinError: true);
   void clearStartError() => state = state.copyWith(clearStartError: true);
+  void clearTransitionError() =>
+      state = state.copyWith(clearTransitionError: true);
 }
 
 final tournamentDetailProvider = StateNotifierProvider.family<

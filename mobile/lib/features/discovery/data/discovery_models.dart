@@ -1,4 +1,4 @@
-// Discovery domain models — mirrors backend PlayerDiscoveryResponse.
+// Discovery domain models — mirrors backend PlayerDiscoveryResponse / VenueResponse.
 
 class PlayerSearchResult {
   const PlayerSearchResult({
@@ -56,4 +56,57 @@ class PlayerSearchResult {
   int? get winRate => matchesPlayed == 0
       ? null
       : ((wins / matchesPlayed) * 100).round();
+}
+
+// ── Venue ─────────────────────────────────────────────────────────────────
+
+class Venue {
+  const Venue({
+    required this.id,
+    required this.name,
+    this.city,
+    this.address,
+    this.courtCount,
+    this.submittedBy,
+    required this.createdAt,
+  });
+
+  factory Venue.fromJson(Map<String, dynamic> json) => Venue(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        city: json['city'] as String?,
+        address: json['address'] as String?,
+        courtCount: json['court_count'] as int?,
+        submittedBy: json['submitted_by'] as String?,
+        createdAt: json['created_at'] as String,
+      );
+
+  final String id;
+  final String name;
+  final String? city;
+  final String? address;
+  final int? courtCount;
+  final String? submittedBy;
+  final String createdAt;
+}
+
+class VenueCreate {
+  const VenueCreate({
+    required this.name,
+    this.city,
+    this.address,
+    this.courtCount,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (city != null) 'city': city,
+        if (address != null) 'address': address,
+        if (courtCount != null) 'court_count': courtCount,
+      };
+
+  final String name;
+  final String? city;
+  final String? address;
+  final int? courtCount;
 }

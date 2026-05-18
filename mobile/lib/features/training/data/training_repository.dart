@@ -30,6 +30,18 @@ class TrainingRepository {
     return TrainingLog.fromJson(unwrap(response));
   }
 
+  Future<TrainingLog> updateLog(String id, TrainingLogCreate request) async {
+    final response = await _dio.put(
+      ApiEndpoints.trainingLog(id),
+      data: request.toJson(),
+    );
+    return TrainingLog.fromJson(unwrap(response));
+  }
+
+  Future<void> deleteLog(String id) async {
+    await _dio.delete(ApiEndpoints.trainingLog(id));
+  }
+
   // ── Goals ─────────────────────────────────────────────────────────────────
 
   Future<List<TrainingGoal>> getMyGoals({int limit = 50}) async {

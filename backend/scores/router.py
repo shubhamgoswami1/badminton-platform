@@ -14,13 +14,14 @@ Endpoints
 import uuid
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import scores.service as svc
 from common.dependencies import get_current_user
 from common.exceptions import SyncConflictError
+from common.idempotency import check_idempotency, store_idempotency
 from common.response import ok
 from database import get_db
 from fastapi import Query
@@ -199,13 +200,31 @@ async def submit_score(
     body: SubmitScoreRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ) -> dict:
-    """Submit all set scores and complete the match in one request."""
+    """
+    Submit all set scores and complete the match in one request.
+
+    Supports idempotency: include an ``Idempotency-Key`` header (UUID or any
+    unique string up to 255 chars) and repeated requests with the same key
+    within 24 hours will return the original response without re-processing.
+    """
+    # ── Idempotency check ─────────────────────────────────────────────────
+    if idempotency_key:
+        cached = await check_idempotency(db, idempotency_key)
+        if cached:
+            return JSONResponse(
+                status_code=cached["status_code"],
+                content=cached["body"],
+            )
+
+    # ── Business logic ────────────────────────────────────────────────────
     try:
         match, score_rows = await svc.submit_score(db, match_id, current_user.id, body)
     except SyncConflictError as exc:
         return _sync_conflict_response(exc)
-    return ok(
+
+    response_body = ok(
         MatchScoreResponse(
             match_id=match.id,
             status=match.status,
@@ -213,6 +232,12 @@ async def submit_score(
             sets=[SetScoreResponse.model_validate(s) for s in score_rows],
         ).model_dump()
     )
+
+    # ── Cache response for future duplicate requests ───────────────────────
+    if idempotency_key:
+        await store_idempotency(db, idempotency_key, 200, response_body)
+
+    return response_body
 
 
 # ── GET /matches/{id}/score (legacy alias) ────────────────────────────────────

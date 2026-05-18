@@ -88,6 +88,25 @@ class TournamentRepository {
     await _dio.delete(ApiEndpoints.participant(tournamentId, participantId));
   }
 
+  // ── Status transition ─────────────────────────────────────────────────
+
+  Future<Tournament> transitionStatus(String tournamentId, String nextStatus) async {
+    final response = await _dio.post(
+      ApiEndpoints.tournamentStatus(tournamentId),
+      data: {'next_status': nextStatus},
+    );
+    return Tournament.fromJson(unwrap(response));
+  }
+
+  Future<Tournament> updateTournament(
+      String tournamentId, CreateTournamentRequest data) async {
+    final response = await _dio.put(
+      ApiEndpoints.tournament(tournamentId),
+      data: data.toJson(),
+    );
+    return Tournament.fromJson(unwrap(response));
+  }
+
   // ── Start tournament ──────────────────────────────────────────────────
 
   Future<Tournament> startTournament(String tournamentId) async {

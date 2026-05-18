@@ -47,6 +47,30 @@ class DiscoveryRepository {
       total: total,
     );
   }
+
+  Future<List<Venue>> getVenues({String? city, int limit = 50}) async {
+    final params = <String, dynamic>{'limit': limit};
+    if (city != null && city.isNotEmpty) params['city'] = city;
+
+    final response = await _dio.get(
+      ApiEndpoints.venues,
+      queryParameters: params,
+    );
+    final body = response.data as Map<String, dynamic>;
+    final dataList = body['data'] as List<dynamic>;
+    return dataList
+        .map((e) => Venue.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Venue> submitVenue(VenueCreate data) async {
+    final response = await _dio.post(
+      ApiEndpoints.venues,
+      data: data.toJson(),
+    );
+    final body = response.data as Map<String, dynamic>;
+    return Venue.fromJson(body['data'] as Map<String, dynamic>);
+  }
 }
 
 final discoveryRepositoryProvider = Provider<DiscoveryRepository>((ref) {
