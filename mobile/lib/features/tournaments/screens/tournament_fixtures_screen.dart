@@ -288,6 +288,7 @@ class _KnockoutFixtures extends StatelessWidget {
         child: _BracketMatchCard(
           match: match,
           tournament: tournament,
+          participantNames: state.participantNames,
         ),
       );
     }).toList();
@@ -400,10 +401,23 @@ class _BracketLinePainter extends CustomPainter {
 // ── Compact bracket match card ────────────────────────────────────────────
 
 class _BracketMatchCard extends StatelessWidget {
-  const _BracketMatchCard({required this.match, required this.tournament});
+  const _BracketMatchCard({
+    required this.match,
+    required this.tournament,
+    this.participantNames = const {},
+  });
 
   final Match match;
   final Tournament tournament;
+  final Map<String, String> participantNames;
+
+  String _label(String? id) {
+    if (id == null) return 'TBD';
+    return participantNames[id] ?? id.substring(0, 8);
+  }
+
+  bool _hasName(String? id) =>
+      id != null && participantNames.containsKey(id);
 
   @override
   Widget build(BuildContext context) {
@@ -469,9 +483,7 @@ class _BracketMatchCard extends StatelessWidget {
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        match.sideAParticipantId != null
-                            ? match.sideAParticipantId!.substring(0, 8)
-                            : 'TBD',
+                        _label(match.sideAParticipantId),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: sideAWon
@@ -482,7 +494,8 @@ class _BracketMatchCard extends StatelessWidget {
                               : match.sideAParticipantId != null
                                   ? AppColors.onSurface
                                   : AppColors.disabled,
-                          fontFamily: match.sideAParticipantId != null
+                          fontFamily: !_hasName(match.sideAParticipantId) &&
+                                  match.sideAParticipantId != null
                               ? 'monospace'
                               : null,
                         ),
@@ -515,9 +528,7 @@ class _BracketMatchCard extends StatelessWidget {
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        match.sideBParticipantId != null
-                            ? match.sideBParticipantId!.substring(0, 8)
-                            : 'TBD',
+                        _label(match.sideBParticipantId),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: sideBWon
@@ -528,7 +539,8 @@ class _BracketMatchCard extends StatelessWidget {
                               : match.sideBParticipantId != null
                                   ? AppColors.onSurface
                                   : AppColors.disabled,
-                          fontFamily: match.sideBParticipantId != null
+                          fontFamily: !_hasName(match.sideBParticipantId) &&
+                                  match.sideBParticipantId != null
                               ? 'monospace'
                               : null,
                         ),
@@ -623,6 +635,7 @@ class _RoundRobinFixtures extends StatelessWidget {
             label: 'Round $round',
             matches: matches,
             tournament: tournament,
+            participantNames: state.participantNames,
           );
         },
       ),
@@ -637,11 +650,13 @@ class _RoundSection extends StatelessWidget {
     required this.label,
     required this.matches,
     required this.tournament,
+    this.participantNames = const {},
   });
 
   final String label;
   final List<Match> matches;
   final Tournament tournament;
+  final Map<String, String> participantNames;
 
   @override
   Widget build(BuildContext context) {
@@ -656,6 +671,7 @@ class _RoundSection extends StatelessWidget {
             child: _FixtureMatchCard(
               match: m,
               tournament: tournament,
+              participantNames: participantNames,
             ),
           ),
         ),
@@ -713,10 +729,12 @@ class _FixtureMatchCard extends StatelessWidget {
   const _FixtureMatchCard({
     required this.match,
     required this.tournament,
+    this.participantNames = const {},
   });
 
   final Match match;
   final Tournament tournament;
+  final Map<String, String> participantNames;
 
   @override
   Widget build(BuildContext context) {
@@ -746,6 +764,7 @@ class _FixtureMatchCard extends StatelessWidget {
               Expanded(
                 child: _SideLabel(
                   participantId: match.sideAParticipantId,
+                  displayName: participantNames[match.sideAParticipantId ?? ''],
                   isWinner: sideAWon,
                   alignment: CrossAxisAlignment.start,
                 ),
@@ -791,6 +810,7 @@ class _FixtureMatchCard extends StatelessWidget {
               Expanded(
                 child: _SideLabel(
                   participantId: match.sideBParticipantId,
+                  displayName: participantNames[match.sideBParticipantId ?? ''],
                   isWinner: sideBWon,
                   alignment: CrossAxisAlignment.end,
                 ),
@@ -806,11 +826,15 @@ class _FixtureMatchCard extends StatelessWidget {
 class _SideLabel extends StatelessWidget {
   const _SideLabel({
     this.participantId,
+    this.displayName,
     required this.isWinner,
     required this.alignment,
   });
 
   final String? participantId;
+  /// Resolved display name (e.g. "Alice" or "Alice & Bob"). Takes precedence
+  /// over the raw UUID fallback.
+  final String? displayName;
   final bool isWinner;
   final CrossAxisAlignment alignment;
 
@@ -834,9 +858,10 @@ class _SideLabel extends StatelessWidget {
             ],
             Flexible(
               child: Text(
-                participantId != null
-                    ? participantId!.substring(0, 8)
-                    : 'TBD',
+                displayName ??
+                    (participantId != null
+                        ? participantId!.substring(0, 8)
+                        : 'TBD'),
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight:
@@ -846,8 +871,10 @@ class _SideLabel extends StatelessWidget {
                       : participantId != null
                           ? AppColors.onSurface
                           : AppColors.disabled,
-                  fontFamily:
-                      participantId != null ? 'monospace' : null,
+                  // Use monospace only when falling back to raw UUID prefix
+                  fontFamily: displayName == null && participantId != null
+                      ? 'monospace'
+                      : null,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),

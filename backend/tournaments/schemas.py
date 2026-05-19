@@ -93,6 +93,9 @@ class ParticipantResponse(BaseModel):
     seed_order: Optional[int] = None
     registered_at: datetime
     status: str
+    # Display names resolved from PlayerProfile — None when profile not yet created.
+    display_name: Optional[str] = None
+    partner_display_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

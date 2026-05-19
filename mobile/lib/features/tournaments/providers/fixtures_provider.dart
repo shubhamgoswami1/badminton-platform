@@ -14,18 +14,22 @@ class TournamentFixturesState {
   const TournamentFixturesState({
     this.matches = const [],
     this.standings = const [],
+    this.participantNames = const {},
     this.isLoading = false,
     this.error,
   });
 
   final List<Match> matches;
   final List<StandingEntry> standings;
+  /// Maps participantId → display label (e.g. "Alice" or "Alice & Bob" for doubles).
+  final Map<String, String> participantNames;
   final bool isLoading;
   final String? error;
 
   TournamentFixturesState copyWith({
     List<Match>? matches,
     List<StandingEntry>? standings,
+    Map<String, String>? participantNames,
     bool? isLoading,
     String? error,
     bool clearError = false,
@@ -33,6 +37,7 @@ class TournamentFixturesState {
       TournamentFixturesState(
         matches: matches ?? this.matches,
         standings: standings ?? this.standings,
+        participantNames: participantNames ?? this.participantNames,
         isLoading: isLoading ?? this.isLoading,
         error: clearError ? null : (error ?? this.error),
       );
@@ -71,30 +76,48 @@ class TournamentFixturesNotifier
     if (state.isLoading) return;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      // Load matches and standings in parallel; standings 409 for KO is normal.
+      // Load matches, standings, and participants in parallel.
+      // Standings 409 for KO is normal; participants failure is non-fatal.
       final results = await Future.wait([
         _matchRepo.getTournamentMatches(_tournamentId),
         _loadStandingsSafe(),
+        _loadParticipantsSafe(),
       ]);
 
       final matches = results[0] as List<Match>;
       final standings = results[1] as List<StandingEntry>;
+      final participants = results[2] as List<TournamentParticipant>;
 
       matches.sort((a, b) {
         final r = a.round.compareTo(b.round);
         return r != 0 ? r : a.matchNumber.compareTo(b.matchNumber);
       });
 
+      // Build participantId → display label map.
+      final nameMap = <String, String>{
+        for (final p in participants) p.id: p.matchLabel,
+      };
+
       state = state.copyWith(
         isLoading: false,
         matches: matches,
         standings: standings,
+        participantNames: nameMap,
       );
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
         error: 'Could not load fixtures.',
       );
+    }
+  }
+
+  /// Loads participants and swallows errors so they don't fail the whole load.
+  Future<List<TournamentParticipant>> _loadParticipantsSafe() async {
+    try {
+      return await _tournamentRepo.getParticipants(_tournamentId);
+    } catch (_) {
+      return [];
     }
   }
 

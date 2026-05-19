@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -9,6 +8,8 @@ import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/loading_indicator.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../discovery/data/discovery_models.dart';
+import '../../discovery/providers/discovery_provider.dart';
 import '../data/tournament_models.dart';
 import '../providers/tournament_provider.dart';
 import 'edit_tournament_screen.dart';
@@ -66,8 +67,8 @@ class _TournamentDetailScreenState
     }
   }
 
-  /// Shows a bottom sheet prompting the user to enter their partner's User ID.
-  /// Returns the UUID string if confirmed, or null if dismissed.
+  /// Shows a bottom sheet with player search for the partner.
+  /// Returns the partner's userId string if confirmed, or null if dismissed.
   Future<String?> _showPartnerSheet() async {
     return showModalBottomSheet<String?>(
       context: context,
@@ -1025,123 +1026,217 @@ String _month(int m) => const [
 // ── Partner entry bottom sheet ────────────────────────────────────────────────
 
 /// Shown when a player joins a DOUBLES or MIXED_DOUBLES tournament.
-/// Prompts for the partner's User ID (UUID). Returns the ID string on confirm,
-/// or null if the user closes without confirming.
-class _PartnerEntrySheet extends StatefulWidget {
+/// Lets the user search for their partner by name. Selecting a player card
+/// confirms them as partner and pops the sheet with their userId.
+class _PartnerEntrySheet extends ConsumerStatefulWidget {
   const _PartnerEntrySheet();
 
   @override
-  State<_PartnerEntrySheet> createState() => _PartnerEntrySheetState();
+  ConsumerState<_PartnerEntrySheet> createState() => _PartnerEntrySheetState();
 }
 
-class _PartnerEntrySheetState extends State<_PartnerEntrySheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _ctrl = TextEditingController();
+class _PartnerEntrySheetState extends ConsumerState<_PartnerEntrySheet> {
+  final _searchCtrl = TextEditingController();
+  PlayerSearchResult? _selected;
 
-  static final _uuidRegex = RegExp(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-    caseSensitive: false,
-  );
+  // Debounce timer
+  DateTime? _lastQuery;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialise with empty results (no location needed here).
+    Future.microtask(() => ref.read(discoveryProvider.notifier).search());
+  }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    final now = DateTime.now();
+    _lastQuery = now;
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      if (_lastQuery == now) {
+        ref.read(discoveryProvider.notifier).setQuery(query);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final discoveryState = ref.watch(discoveryProvider);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.outline,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+          20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Handle ──────────────────────────────────────────────────
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.outline,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 16),
 
-            Text('Enter Partner\'s User ID', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 6),
-            Text(
-              'Ask your partner to copy their User ID from their profile screen.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: AppColors.onSurfaceVariant),
+          Text('Find Your Partner', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 6),
+          Text(
+            'Search by name to find your doubles partner.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: AppColors.onSurfaceVariant),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Search field ─────────────────────────────────────────────
+          TextField(
+            controller: _searchCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Search players',
+              hintText: 'Type a name…',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.search_outlined),
             ),
-            const SizedBox(height: 20),
+            textInputAction: TextInputAction.search,
+            onChanged: _onSearchChanged,
+          ),
+          const SizedBox(height: 12),
 
-            TextFormField(
-              controller: _ctrl,
-              decoration: const InputDecoration(
-                labelText: 'Partner User ID',
-                hintText: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person_search_outlined),
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F\-]')),
-              ],
-              textInputAction: TextInputAction.done,
-              autocorrect: false,
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) {
-                  return 'Partner User ID is required';
-                }
-                if (!_uuidRegex.hasMatch(v.trim())) {
-                  return 'Please enter a valid UUID';
-                }
-                return null;
-              },
+          // ── Selected chip ─────────────────────────────────────────────
+          if (_selected != null) ...[
+            Chip(
+              avatar: const Icon(Icons.person_outlined, size: 16),
+              label: Text('Selected: ${_selected!.displayName}'),
+              onDeleted: () => setState(() => _selected = null),
+              backgroundColor:
+                  AppColors.primary.withValues(alpha: 0.10),
+              side: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.3)),
             ),
-
-            const SizedBox(height: 20),
-
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.sports_tennis),
-                    label: const Text('Confirm Partner'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    onPressed: () {
-                      if (_formKey.currentState!.validate()) {
-                        Navigator.of(context).pop(_ctrl.text.trim());
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
+            const SizedBox(height: 12),
           ],
-        ),
+
+          // ── Results list ─────────────────────────────────────────────
+          if (discoveryState.isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (discoveryState.error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                discoveryState.error!,
+                style: const TextStyle(
+                    color: AppColors.error, fontSize: 13),
+              ),
+            )
+          else if (discoveryState.results.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                _searchCtrl.text.isEmpty
+                    ? 'Start typing to search for players.'
+                    : 'No players found.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: AppColors.onSurfaceVariant),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: discoveryState.results.length,
+                separatorBuilder: (_, __) =>
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                itemBuilder: (context, i) {
+                  final player = discoveryState.results[i];
+                  final isSelected = _selected?.userId == player.userId;
+                  return ListTile(
+                    dense: true,
+                    selected: isSelected,
+                    selectedTileColor:
+                        AppColors.primary.withValues(alpha: 0.07),
+                    leading: CircleAvatar(
+                      radius: 16,
+                      backgroundColor:
+                          AppColors.primary.withValues(alpha: 0.15),
+                      child: Text(
+                        player.initials,
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary),
+                      ),
+                    ),
+                    title: Text(player.displayName,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w500)),
+                    subtitle: Text(
+                      [
+                        if (player.city != null) player.city!,
+                        if (player.skillLevel != null) player.skillLevel!,
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: AppColors.onSurfaceVariant),
+                    ),
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle,
+                            color: AppColors.primary, size: 18)
+                        : null,
+                    onTap: () => setState(() => _selected = player),
+                  );
+                },
+              ),
+            ),
+
+          const SizedBox(height: 16),
+
+          // ── Action buttons ────────────────────────────────────────────
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.sports_tennis),
+                  label: const Text('Confirm Partner'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _selected == null
+                      ? null
+                      : () =>
+                          Navigator.of(context).pop(_selected!.userId),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

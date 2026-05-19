@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -151,6 +152,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
           const Divider(),
 
+          // ── User ID (copy to clipboard) ───────────────────────────────
+          _UserIdTile(userId: ref.watch(authProvider).userId),
+
+          const Divider(),
+
           // ── Career stats ──────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
@@ -277,6 +283,44 @@ class _ProfileTile extends StatelessWidget {
             ),
         textAlign: TextAlign.end,
       ),
+    );
+  }
+}
+
+class _UserIdTile extends StatelessWidget {
+  const _UserIdTile({required this.userId});
+
+  final String? userId;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = userId ?? '–';
+    return ListTile(
+      leading: const Icon(Icons.person_outline, color: AppColors.primary, size: 22),
+      title: const Text('Your User ID',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+      subtitle: Text(
+        id,
+        style: const TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          color: AppColors.onSurfaceVariant,
+        ),
+      ),
+      trailing: userId != null
+          ? IconButton(
+              icon: const Icon(Icons.copy_outlined, size: 18),
+              tooltip: 'Copy User ID',
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: id));
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User ID copied!')),
+                  );
+                }
+              },
+            )
+          : null,
     );
   }
 }

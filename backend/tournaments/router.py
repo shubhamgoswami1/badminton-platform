@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import tournaments.service as svc
@@ -23,7 +24,7 @@ from tournaments.schemas import (
     TournamentStatusTransitionRequest,
     TournamentUpdate,
 )
-from users.models import User
+from users.models import PlayerProfile, User
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
@@ -158,6 +159,40 @@ async def transition_status(
 
 # ── Participants ──────────────────────────────────────────────
 
+async def _enrich_participants(
+    db: AsyncSession,
+    items: list,
+) -> list[dict]:
+    """
+    Build ParticipantResponse dicts enriched with display_name and
+    partner_display_name resolved from PlayerProfile.
+    """
+    all_user_ids = set()
+    for p in items:
+        all_user_ids.add(p.user_id)
+        if p.partner_user_id:
+            all_user_ids.add(p.partner_user_id)
+
+    display_names: dict = {}
+    if all_user_ids:
+        result = await db.execute(
+            select(PlayerProfile.user_id, PlayerProfile.display_name).where(
+                PlayerProfile.user_id.in_(all_user_ids)
+            )
+        )
+        display_names = {row.user_id: row.display_name for row in result}
+
+    def _build(p) -> dict:
+        data = ParticipantResponse.model_validate(p).model_dump()
+        data["display_name"] = display_names.get(p.user_id)
+        data["partner_display_name"] = (
+            display_names.get(p.partner_user_id) if p.partner_user_id else None
+        )
+        return data
+
+    return [_build(p) for p in items]
+
+
 @router.post("/{tournament_id}/participants", status_code=status.HTTP_201_CREATED)
 async def register_participant(
     tournament_id: uuid.UUID,
@@ -166,7 +201,8 @@ async def register_participant(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     p = await svc.register_participant(db, tournament_id, current_user.id, body)
-    return ok(ParticipantResponse.model_validate(p).model_dump())
+    enriched = await _enrich_participants(db, [p])
+    return ok(enriched[0])
 
 
 @router.get("/{tournament_id}/participants", status_code=status.HTTP_200_OK)
@@ -177,10 +213,8 @@ async def list_participants(
     params: Annotated[PageParams, Depends()],
 ) -> dict:
     items = await svc.list_participants(db, tournament_id)
-    return paginate(
-        [ParticipantResponse.model_validate(p).model_dump() for p in items],
-        len(items), params,
-    )
+    enriched = await _enrich_participants(db, items)
+    return paginate(enriched, len(items), params)
 
 
 @router.delete("/{tournament_id}/participants/{participant_id}", status_code=status.HTTP_200_OK)
@@ -203,7 +237,8 @@ async def set_seed_order(
 ) -> dict:
     await svc.set_seed_order(db, tournament_id, current_user.id, body.ordered_participant_ids)
     items = await svc.list_participants(db, tournament_id)
-    return ok([ParticipantResponse.model_validate(p).model_dump() for p in items])
+    enriched = await _enrich_participants(db, items)
+    return ok(enriched)
 
 
 # ── Start tournament ──────────────────────────────────────────

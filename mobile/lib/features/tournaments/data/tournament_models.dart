@@ -229,6 +229,8 @@ class TournamentParticipant {
     this.seedOrder,
     required this.registeredAt,
     required this.status,
+    this.displayName,
+    this.partnerDisplayName,
   });
 
   factory TournamentParticipant.fromJson(Map<String, dynamic> json) =>
@@ -240,6 +242,8 @@ class TournamentParticipant {
         seedOrder: json['seed_order'] as int?,
         registeredAt: json['registered_at'] as String,
         status: json['status'] as String,
+        displayName: json['display_name'] as String?,
+        partnerDisplayName: json['partner_display_name'] as String?,
       );
 
   final String id;
@@ -249,11 +253,26 @@ class TournamentParticipant {
   final int? seedOrder;
   final String registeredAt;
   final String status;
+  /// Player's display name from their profile (null if no profile yet).
+  final String? displayName;
+  /// Partner's display name for doubles (null for singles or no partner profile).
+  final String? partnerDisplayName;
 
   bool get isActive => status == ParticipantStatus.active;
 
-  /// Short display identifier (first 8 chars of userId UUID).
-  String get shortId => userId.length >= 8 ? userId.substring(0, 8) : userId;
+  /// Short display identifier: displayName if available, else first 8 chars of userId.
+  String get shortId => displayName ?? (userId.length >= 8 ? userId.substring(0, 8) : userId);
+
+  /// Label used in match cards. For doubles: "Name & Partner", for singles: "Name".
+  String get matchLabel {
+    final name = displayName ?? (userId.length >= 8 ? userId.substring(0, 8) : userId);
+    if (partnerUserId != null) {
+      final partner = partnerDisplayName ??
+          (partnerUserId!.length >= 8 ? partnerUserId!.substring(0, 8) : partnerUserId!);
+      return '$name & $partner';
+    }
+    return name;
+  }
 }
 
 // ── Standing entry (round-robin) ──────────────────────────────────────────
