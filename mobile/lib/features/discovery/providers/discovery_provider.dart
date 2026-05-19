@@ -277,12 +277,16 @@ class DiscoveryTournamentsState {
     this.isLoading = false,
     this.error,
     this.cityFilter,
+    this.formatFilter,
   });
 
   final List<DiscoveryTournament> items;
   final bool isLoading;
   final String? error;
   final String? cityFilter;
+  final String? formatFilter;
+
+  bool get hasFilters => cityFilter != null || formatFilter != null;
 
   DiscoveryTournamentsState copyWith({
     List<DiscoveryTournament>? items,
@@ -291,12 +295,16 @@ class DiscoveryTournamentsState {
     bool clearError = false,
     String? cityFilter,
     bool clearCityFilter = false,
+    String? formatFilter,
+    bool clearFormatFilter = false,
   }) =>
       DiscoveryTournamentsState(
         items: items ?? this.items,
         isLoading: isLoading ?? this.isLoading,
         error: clearError ? null : (error ?? this.error),
         cityFilter: clearCityFilter ? null : (cityFilter ?? this.cityFilter),
+        formatFilter:
+            clearFormatFilter ? null : (formatFilter ?? this.formatFilter),
       );
 }
 
@@ -307,15 +315,19 @@ class DiscoveryTournamentsNotifier
 
   final DiscoveryRepository _repo;
 
-  Future<void> load({String? city}) async {
+  Future<void> load({String? city, String? format}) async {
+    final effectiveCity = city ?? state.cityFilter;
+    final effectiveFormat = format ?? state.formatFilter;
     state = state.copyWith(
       isLoading: true,
       clearError: true,
       cityFilter: city,
+      formatFilter: format,
     );
     try {
       final result = await _repo.discoverTournaments(
-        city: city ?? state.cityFilter,
+        city: effectiveCity,
+        format: effectiveFormat,
         status: 'REGISTRATION_OPEN',
       );
       state = state.copyWith(isLoading: false, items: result.items);
@@ -327,7 +339,23 @@ class DiscoveryTournamentsNotifier
     }
   }
 
-  Future<void> refresh() => load(city: state.cityFilter);
+  Future<void> refresh() =>
+      load(city: state.cityFilter, format: state.formatFilter);
+
+  Future<void> applyFilters({String? city, String? format}) async {
+    state = state.copyWith(
+      cityFilter: city,
+      clearCityFilter: city == null,
+      formatFilter: format,
+      clearFormatFilter: format == null,
+    );
+    await load(city: city, format: format);
+  }
+
+  Future<void> clearFilters() async {
+    state = state.copyWith(clearCityFilter: true, clearFormatFilter: true);
+    await load();
+  }
 
   void setCityFilter(String? city) {
     state = state.copyWith(

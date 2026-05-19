@@ -6,6 +6,7 @@ import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/loading_indicator.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../tournaments/providers/tournament_provider.dart';
 import '../data/match_models.dart';
 import '../providers/match_provider.dart';
 
@@ -100,6 +101,12 @@ class _MatchDetailScreenState extends ConsumerState<MatchDetailScreen> {
   ) {
     final match = matchCtx.match;
 
+    // Load participant names for this tournament (non-blocking; graceful if empty).
+    final participantsState = ref.watch(participantsProvider(match.tournamentId));
+    final participantNames = <String, String>{
+      for (final p in participantsState.items) p.id: p.matchLabel,
+    };
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -117,6 +124,7 @@ class _MatchDetailScreenState extends ConsumerState<MatchDetailScreen> {
             winnerParticipantId:
                 state.matchDetail?.winnerParticipantId ??
                 state.matchScore?.winnerParticipantId,
+            participantNames: participantNames,
           ),
           const SizedBox(height: 16),
 
@@ -147,6 +155,7 @@ class _MatchDetailScreenState extends ConsumerState<MatchDetailScreen> {
               sideAParticipantId: match.sideAParticipantId,
               sideBParticipantId: match.sideBParticipantId,
               eloApplied: state.matchDetail?.eloApplied ?? false,
+              participantNames: participantNames,
             ),
             const SizedBox(height: 24),
           ]
@@ -164,6 +173,7 @@ class _MatchDetailScreenState extends ConsumerState<MatchDetailScreen> {
               initialSets: state.matchDetail?.sortedSets ?? [],
               isUpdating: state.isUpdating,
               isCompleting: state.isCompleting,
+              participantNames: participantNames,
               onUpdateScore: (sets) async {
                 final ok = await ref
                     .read(matchDetailProvider(match.id).notifier)
@@ -282,10 +292,12 @@ class _SidesCard extends StatelessWidget {
   const _SidesCard({
     required this.match,
     this.winnerParticipantId,
+    this.participantNames = const {},
   });
 
   final Match match;
   final String? winnerParticipantId;
+  final Map<String, String> participantNames;
 
   @override
   Widget build(BuildContext context) {
@@ -304,6 +316,9 @@ class _SidesCard extends StatelessWidget {
               child: _SideLabel(
                 label: 'Side A',
                 participantId: match.sideAParticipantId,
+                displayName: match.sideAParticipantId != null
+                    ? participantNames[match.sideAParticipantId]
+                    : null,
                 isWinner: sideAWon,
                 alignment: CrossAxisAlignment.start,
               ),
@@ -321,6 +336,9 @@ class _SidesCard extends StatelessWidget {
               child: _SideLabel(
                 label: 'Side B',
                 participantId: match.sideBParticipantId,
+                displayName: match.sideBParticipantId != null
+                    ? participantNames[match.sideBParticipantId]
+                    : null,
                 isWinner: sideBWon,
                 alignment: CrossAxisAlignment.end,
               ),
@@ -336,17 +354,27 @@ class _SideLabel extends StatelessWidget {
   const _SideLabel({
     required this.label,
     this.participantId,
+    this.displayName,
     required this.isWinner,
     required this.alignment,
   });
 
   final String label;
   final String? participantId;
+  final String? displayName;
   final bool isWinner;
   final CrossAxisAlignment alignment;
 
   @override
   Widget build(BuildContext context) {
+    final nameText = displayName ??
+        (participantId != null
+            ? (participantId!.length >= 8
+                ? participantId!.substring(0, 8)
+                : participantId!)
+            : null);
+    final isUuidFallback = displayName == null && participantId != null;
+
     return Column(
       crossAxisAlignment: alignment,
       children: [
@@ -369,15 +397,13 @@ class _SideLabel extends StatelessWidget {
             ),
           ],
         ),
-        if (participantId != null) ...[
+        if (nameText != null) ...[
           const SizedBox(height: 2),
           Text(
-            participantId!.length >= 8
-                ? participantId!.substring(0, 8)
-                : participantId!,
+            nameText,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: AppColors.onSurfaceVariant,
-                  fontFamily: 'monospace',
+                  fontFamily: isUuidFallback ? 'monospace' : null,
                 ),
           ),
         ] else
@@ -533,6 +559,7 @@ class _DoneBanner extends StatelessWidget {
     required this.sideAParticipantId,
     required this.sideBParticipantId,
     required this.eloApplied,
+    this.participantNames = const {},
   });
 
   final String status;
@@ -540,15 +567,22 @@ class _DoneBanner extends StatelessWidget {
   final String? sideAParticipantId;
   final String? sideBParticipantId;
   final bool eloApplied;
+  final Map<String, String> participantNames;
 
   @override
   Widget build(BuildContext context) {
     final isWalkover = status == MatchStatus.walkover;
-    final winnerSide = winnerParticipantId == sideAParticipantId
-        ? 'Side A'
-        : winnerParticipantId == sideBParticipantId
-            ? 'Side B'
-            : null;
+    final String? winnerSide;
+    if (winnerParticipantId != null &&
+        participantNames.containsKey(winnerParticipantId)) {
+      winnerSide = participantNames[winnerParticipantId];
+    } else if (winnerParticipantId == sideAParticipantId) {
+      winnerSide = 'Side A';
+    } else if (winnerParticipantId == sideBParticipantId) {
+      winnerSide = 'Side B';
+    } else {
+      winnerSide = null;
+    }
 
     return Container(
       width: double.infinity,
@@ -627,6 +661,7 @@ class _ScoreForm extends ConsumerStatefulWidget {
     required this.isCompleting,
     required this.onUpdateScore,
     required this.onComplete,
+    this.participantNames = const {},
   });
 
   final Match match;
@@ -636,6 +671,7 @@ class _ScoreForm extends ConsumerStatefulWidget {
   final bool isCompleting;
   final Future<bool> Function(List<SetScoreInput>) onUpdateScore;
   final Future<bool> Function(CompleteMatchRequest) onComplete;
+  final Map<String, String> participantNames;
 
   @override
   ConsumerState<_ScoreForm> createState() => _ScoreFormState();
@@ -873,7 +909,11 @@ class _ScoreFormState extends ConsumerState<_ScoreForm> {
           children: [
             Expanded(
               child: _WinnerButton(
-                label: 'Side A',
+                label: (widget.match.sideAParticipantId != null &&
+                        widget.participantNames
+                            .containsKey(widget.match.sideAParticipantId))
+                    ? widget.participantNames[widget.match.sideAParticipantId]!
+                    : 'Side A',
                 selected: _winnerId == widget.match.sideAParticipantId,
                 enabled: canSideA && !_isBusy,
                 onTap: (canSideA && !_isBusy)
@@ -885,7 +925,11 @@ class _ScoreFormState extends ConsumerState<_ScoreForm> {
             const SizedBox(width: 12),
             Expanded(
               child: _WinnerButton(
-                label: 'Side B',
+                label: (widget.match.sideBParticipantId != null &&
+                        widget.participantNames
+                            .containsKey(widget.match.sideBParticipantId))
+                    ? widget.participantNames[widget.match.sideBParticipantId]!
+                    : 'Side B',
                 selected: _winnerId == widget.match.sideBParticipantId,
                 enabled: canSideB && !_isBusy,
                 onTap: (canSideB && !_isBusy)

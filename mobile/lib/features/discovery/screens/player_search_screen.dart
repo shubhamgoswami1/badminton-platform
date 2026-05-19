@@ -418,6 +418,12 @@ class _DiscoveryTournamentsTab extends ConsumerStatefulWidget {
 
 class _DiscoveryTournamentsTabState
     extends ConsumerState<_DiscoveryTournamentsTab> {
+  final _cityController = TextEditingController();
+  String? _selectedFormat; // 'KNOCKOUT' | 'ROUND_ROBIN' | null
+
+  static const _formats = ['KNOCKOUT', 'ROUND_ROBIN'];
+  static const _formatLabels = {'KNOCKOUT': 'Knockout', 'ROUND_ROBIN': 'Round Robin'};
+
   @override
   void initState() {
     super.initState();
@@ -429,9 +435,117 @@ class _DiscoveryTournamentsTabState
   }
 
   @override
+  void dispose() {
+    _cityController.dispose();
+    super.dispose();
+  }
+
+  void _applyFilters() {
+    final city = _cityController.text.trim().isEmpty
+        ? null
+        : _cityController.text.trim();
+    ref.read(discoveryTournamentsProvider.notifier).applyFilters(
+          city: city,
+          format: _selectedFormat,
+        );
+  }
+
+  void _clearFilters() {
+    _cityController.clear();
+    setState(() => _selectedFormat = null);
+    ref.read(discoveryTournamentsProvider.notifier).clearFilters();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = ref.watch(discoveryTournamentsProvider);
+    final theme = Theme.of(context);
 
+    return Column(
+      children: [
+        // ── Filter bar ─────────────────────────────────────────────────
+        Container(
+          color: theme.colorScheme.surface,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // City search field
+              TextField(
+                controller: _cityController,
+                decoration: InputDecoration(
+                  hintText: 'Filter by city…',
+                  prefixIcon: const Icon(Icons.location_on_outlined, size: 18),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 10, horizontal: 12),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  suffixIcon: _cityController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close, size: 16),
+                          onPressed: () {
+                            _cityController.clear();
+                            _applyFilters();
+                          },
+                        )
+                      : null,
+                ),
+                onSubmitted: (_) => _applyFilters(),
+                onChanged: (_) => setState(() {}),
+                textInputAction: TextInputAction.search,
+              ),
+              const SizedBox(height: 6),
+              // Format chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ..._formats.map((fmt) {
+                      final selected = _selectedFormat == fmt;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          label: Text(_formatLabels[fmt]!),
+                          selected: selected,
+                          onSelected: (_) {
+                            setState(() {
+                              _selectedFormat = selected ? null : fmt;
+                            });
+                            _applyFilters();
+                          },
+                        ),
+                      );
+                    }),
+                    if (state.hasFilters)
+                      TextButton.icon(
+                        icon: const Icon(Icons.clear, size: 14),
+                        label: const Text('Clear'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: theme.colorScheme.error,
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: _clearFilters,
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+
+        // ── Content ────────────────────────────────────────────────────
+        Expanded(
+          child: _buildContent(state),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(DiscoveryTournamentsState state) {
     if (state.isLoading && state.items.isEmpty) {
       return const LoadingIndicator();
     }

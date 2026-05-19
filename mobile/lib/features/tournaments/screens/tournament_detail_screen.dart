@@ -704,14 +704,14 @@ class _ParticipantRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Player ${participant.shortId}…',
+                  participant.displayName ?? 'Player ${participant.shortId}…',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w500,
                       ),
                 ),
                 if (participant.partnerUserId != null)
                   Text(
-                    'Partner: ${participant.partnerUserId!.substring(0, 8)}…',
+                    'Partner: ${participant.partnerDisplayName ?? participant.partnerUserId!.substring(0, 8)}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppColors.onSurfaceVariant,
                         ),
