@@ -6,6 +6,13 @@ import '../../../core/widgets/empty_state.dart';
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
+  static String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning!';
+    if (hour < 17) return 'Good afternoon!';
+    return 'Good evening!';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -21,16 +28,16 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 16),
         children: [
-          // Greeting card
+          // ── Hero greeting card ──────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Card(
               color: AppColors.primary,
               margin: EdgeInsets.zero,
               child: Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
                 child: Row(
                   children: [
                     Expanded(
@@ -38,7 +45,7 @@ class HomeScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Good morning!',
+                            _greeting(),
                             style: theme.textTheme.headlineMedium?.copyWith(
                               color: Colors.white,
                             ),
@@ -64,40 +71,57 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
 
-          // Quick stats
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+          // ── Quick stats ─────────────────────────────────────────────────
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(child: _StatCard(label: 'Tournaments', value: '–', icon: Icons.emoji_events_outlined)),
-                const SizedBox(width: 12),
+                SizedBox(width: 10),
                 Expanded(child: _StatCard(label: 'Matches', value: '–', icon: Icons.sports_outlined)),
-                const SizedBox(width: 12),
-                Expanded(child: _StatCard(label: 'Training hrs', value: '–', icon: Icons.fitness_center_outlined)),
+                SizedBox(width: 10),
+                Expanded(child: _StatCard(label: 'Hours trained', value: '–', icon: Icons.fitness_center_outlined)),
               ],
             ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
 
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('Upcoming Matches', style: theme.textTheme.titleLarge),
-          ),
+          // ── Section header ──────────────────────────────────────────────
+          const _SectionHeader(title: 'Upcoming Matches'),
+
           const SizedBox(height: 4),
 
-          EmptyState(
+          const EmptyState(
             icon: Icons.sports_outlined,
             title: 'No upcoming matches',
-            subtitle: 'Register for a tournament to get started.',
+            subtitle: 'Register for a tournament\nto get started.',
           ),
         ],
       ),
     );
   }
 }
+
+// ── Section header ────────────────────────────────────────────────────────────
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    );
+  }
+}
+
+// ── Stat card ─────────────────────────────────────────────────────────────────
 
 class _StatCard extends StatelessWidget {
   const _StatCard({required this.label, required this.value, required this.icon});
@@ -111,11 +135,11 @@ class _StatCard extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
         child: Column(
           children: [
-            Icon(icon, size: 28, color: AppColors.primary),
-            const SizedBox(height: 8),
+            Icon(icon, size: 24, color: AppColors.primary),
+            const SizedBox(height: 6),
             Text(
               value,
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -128,6 +152,8 @@ class _StatCard extends StatelessWidget {
               label,
               style: Theme.of(context).textTheme.labelSmall,
               textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),

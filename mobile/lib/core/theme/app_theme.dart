@@ -24,15 +24,27 @@ abstract final class AppTheme {
           ),
         ),
 
-        // Bottom navigation
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        // Bottom navigation (M3 NavigationBar)
+        navigationBarTheme: NavigationBarThemeData(
           backgroundColor: AppColors.surface,
-          selectedItemColor: AppColors.primary,
-          unselectedItemColor: AppColors.onSurfaceVariant,
-          type: BottomNavigationBarType.fixed,
           elevation: 8,
-          selectedLabelStyle: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-          unselectedLabelStyle: TextStyle(fontSize: 11),
+          height: 68,
+          indicatorColor: AppColors.primary.withValues(alpha: 0.14),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              color: selected ? AppColors.primary : AppColors.onSurfaceVariant,
+            );
+          }),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: selected ? AppColors.primary : AppColors.onSurfaceVariant,
+              size: 24,
+            );
+          }),
         ),
 
         // Cards
@@ -100,11 +112,21 @@ abstract final class AppTheme {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
 
+        // TabBar — white labels/indicator when inside an AppBar
+        tabBarTheme: const TabBarThemeData(
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          indicatorColor: Colors.white,
+          labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          unselectedLabelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
+          indicatorSize: TabBarIndicatorSize.label,
+        ),
+
         // Divider
         dividerTheme: const DividerThemeData(
           color: AppColors.outline,
           thickness: 1,
-          space: 1,
+          space: 0,
         ),
 
         // Typography

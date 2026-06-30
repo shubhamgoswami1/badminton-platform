@@ -1,6 +1,8 @@
 """
-P4 Participant registration tests — 13 required cases.
+P4 Participant registration tests — 16 required cases.
 """
+
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -231,7 +233,7 @@ async def test_register_doubles_with_partner(client: AsyncClient, db_session: As
     # Find partner user_id by logging in and getting profile
     p2_tokens = await _do_full_login(client, PHONE_P2)
     me_r = await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {p2_tokens['access_token']}"})
-    partner_user_id = me_r.json()["data"]["id"]
+    partner_user_id = me_r.json()["data"]["user"]["id"]
 
     r = await _register(client, tid, p1["access_token"], partner_user_id=partner_user_id)
     assert r.status_code == 201
@@ -255,3 +257,158 @@ async def test_list_participants_unauthenticated(client: AsyncClient, db_session
 
     r = await client.get(f"/api/v1/tournaments/{tid}/participants")
     assert r.status_code == 401
+
+
+# ── Host-removal tests ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_host_can_remove_participant(client: AsyncClient, db_session: AsyncSession):
+    """Organiser can remove any participant before the tournament starts."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    tid = await _setup_open_tournament(client, org["access_token"])
+
+    reg = await _register(client, tid, p1["access_token"])
+    pid = reg.json()["data"]["id"]
+
+    r = await client.delete(
+        f"/api/v1/tournaments/{tid}/participants/{pid}",
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    assert r.status_code == 200
+
+    # Participant should now be WITHDRAWN
+    list_r = await client.get(
+        f"/api/v1/tournaments/{tid}/participants",
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    items = list_r.json()["data"]
+    participant = next((p for p in items if p["id"] == pid), None)
+    assert participant is not None
+    assert participant["status"] == "WITHDRAWN"
+
+
+@pytest.mark.asyncio
+async def test_third_party_cannot_remove_participant(client: AsyncClient, db_session: AsyncSession):
+    """A user who is neither the participant nor the organiser gets 403."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    p3 = await _do_full_login(client, PHONE_P3)
+    tid = await _setup_open_tournament(client, org["access_token"])
+
+    reg = await _register(client, tid, p1["access_token"])
+    pid = reg.json()["data"]["id"]
+
+    r = await client.delete(
+        f"/api/v1/tournaments/{tid}/participants/{pid}",
+        headers={"Authorization": f"Bearer {p3['access_token']}"},
+    )
+    assert r.status_code == 403
+
+
+# ── Additional coverage cases ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_past_deadline_rejected(client: AsyncClient, db_session: AsyncSession):
+    """Registration after registration_deadline returns 409."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    r = await client.post(
+        "/api/v1/tournaments",
+        json={
+            "title": "Deadline Cup",
+            "format": "KNOCKOUT",
+            "match_format": "BEST_OF_3",
+            "play_type": "SINGLES",
+            "registration_deadline": past,
+        },
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    assert r.status_code == 201
+    tid = r.json()["data"]["id"]
+
+    # Open registration
+    await client.post(
+        f"/api/v1/tournaments/{tid}/status",
+        json={"next_status": "REGISTRATION_OPEN"},
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+
+    r2 = await _register(client, tid, p1["access_token"])
+    assert r2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_register_partner_already_registered_rejected(client: AsyncClient, db_session: AsyncSession):
+    """Registering with a partner who is already registered returns 409."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    p2 = await _do_full_login(client, PHONE_P2)
+
+    # Create doubles tournament
+    r = await client.post(
+        "/api/v1/tournaments",
+        json={
+            "title": "Doubles Cup Partner",
+            "format": "KNOCKOUT",
+            "match_format": "BEST_OF_3",
+            "play_type": "DOUBLES",
+        },
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    assert r.status_code == 201
+    tid = r.json()["data"]["id"]
+    await client.post(
+        f"/api/v1/tournaments/{tid}/status",
+        json={"next_status": "REGISTRATION_OPEN"},
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+
+    # p2 registers first (solo, no partner)
+    await _register(client, tid, p2["access_token"])
+
+    # Get p2's user_id
+    me_r = await client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {p2['access_token']}"},
+    )
+    p2_user_id = me_r.json()["data"]["user"]["id"]
+
+    # p1 tries to register with p2 as partner → p2 already registered
+    r2 = await _register(client, tid, p1["access_token"], partner_user_id=p2_user_id)
+    assert r2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_withdraw_from_in_progress_tournament_rejected(client: AsyncClient, db_session: AsyncSession):
+    """A participant cannot withdraw once the tournament is IN_PROGRESS."""
+    org = await _do_full_login(client, PHONE_ORG)
+    p1 = await _do_full_login(client, PHONE_P1)
+    p2 = await _do_full_login(client, PHONE_P2)
+
+    tid = await _setup_open_tournament(client, org["access_token"])
+
+    reg = await _register(client, tid, p1["access_token"])
+    pid = reg.json()["data"]["id"]
+    await _register(client, tid, p2["access_token"])
+
+    # Close registration and start tournament
+    await client.post(
+        f"/api/v1/tournaments/{tid}/status",
+        json={"next_status": "REGISTRATION_CLOSED"},
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+    await client.post(
+        f"/api/v1/tournaments/{tid}/start",
+        headers={"Authorization": f"Bearer {org['access_token']}"},
+    )
+
+    r = await client.delete(
+        f"/api/v1/tournaments/{tid}/participants/{pid}",
+        headers={"Authorization": f"Bearer {p1['access_token']}"},
+    )
+    assert r.status_code == 409

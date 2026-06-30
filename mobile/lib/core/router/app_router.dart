@@ -1,42 +1,104 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/auth/providers/auth_provider.dart';
+import '../../features/auth/screens/otp_screen.dart';
+import '../../features/auth/screens/phone_entry_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/welcome_screen.dart';
+import '../../features/discovery/screens/player_search_screen.dart';
 import '../../features/home/screens/home_screen.dart';
+import '../../features/matches/data/match_models.dart';
+import '../../features/matches/screens/match_detail_screen.dart';
 import '../../features/matches/screens/matches_screen.dart';
+import '../../features/profile/screens/onboarding_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
+import '../../features/tournaments/data/tournament_models.dart';
+import '../../features/tournaments/screens/create_tournament_screen.dart';
+import '../../features/tournaments/screens/tournament_detail_screen.dart';
+import '../../features/tournaments/screens/tournament_fixtures_screen.dart';
 import '../../features/tournaments/screens/tournaments_screen.dart';
 import '../../features/training/screens/training_screen.dart';
-import '../storage/token_storage.dart';
 import 'shell_scaffold.dart';
 
-// Route paths
+// ── Route paths ────────────────────────────────────────────────────────────
+
 abstract final class AppRoutes {
-  static const splash = '/';
-  static const welcome = '/welcome';
-  static const home = '/home';
-  static const tournaments = '/tournaments';
-  static const matches = '/matches';
-  static const training = '/training';
-  static const profile = '/profile';
+  static const splash           = '/';
+  static const welcome          = '/welcome';
+  static const phoneEntry       = '/phone';
+  static const otp              = '/otp';
+  static const onboarding       = '/onboarding';
+  static const home             = '/home';
+  static const tournaments      = '/tournaments';
+  static const matches          = '/matches';
+  static const training         = '/training';
+  static const discover         = '/discover';
+  static const profile          = '/profile';
+
+  // Tournament detail / create — full-screen (outside the shell).
+  static const tournamentCreate = '/tournament/create';
+  static const _tournamentDetail = '/tournament/:id';
+
+  /// Navigation helper: build the path for a specific tournament.
+  static String tournamentDetailPath(String id) => '/tournament/$id';
+
+  // Match detail — full-screen (outside the shell).
+  static const _matchDetail = '/match/:id';
+
+  /// Navigation helper: build the path for a specific match.
+  static String matchDetailPath(String id) => '/match/$id';
+
+  // Tournament fixtures — full-screen (outside the shell).
+  static const _tournamentFixtures = '/fixtures/:id';
+
+  /// Navigation helper: build the path for a tournament's fixtures.
+  static String tournamentFixturesPath(String id) => '/fixtures/$id';
 }
 
+// ── Router provider ────────────────────────────────────────────────────────
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final tokenStorage = ref.watch(tokenStorageProvider);
+  // refreshListenable causes go_router to re-evaluate redirect() whenever
+  // auth state changes (login, logout, onboarding completion, etc.).
+  final listenable = ref.watch(authListenableProvider);
 
   return GoRouter(
     initialLocation: AppRoutes.splash,
-    redirect: (context, state) async {
-      final isLoggedIn = await tokenStorage.isLoggedIn();
-      final isSplash = state.matchedLocation == AppRoutes.splash;
-      final isWelcome = state.matchedLocation == AppRoutes.welcome;
+    refreshListenable: listenable,
+    redirect: (context, state) {
+      final auth = ref.read(authProvider);
+      final loc  = state.matchedLocation;
 
-      // Let splash handle its own redirect after init
-      if (isSplash) return null;
+      // Splash manages its own navigation — never redirect away from it.
+      if (loc == AppRoutes.splash) return null;
 
-      if (!isLoggedIn && !isWelcome) return AppRoutes.welcome;
-      if (isLoggedIn && isWelcome) return AppRoutes.home;
+      final isAuthScreen = loc == AppRoutes.welcome ||
+          loc == AppRoutes.phoneEntry ||
+          loc == AppRoutes.otp;
+
+      // Not logged in → auth screens only.
+      if (!auth.isLoggedIn && !isAuthScreen) return AppRoutes.welcome;
+
+      // Logged in + on an auth screen → go home (or onboarding if first login).
+      if (auth.isLoggedIn && isAuthScreen) {
+        return auth.isFirstLogin ? AppRoutes.onboarding : AppRoutes.home;
+      }
+
+      // Logged in + first login + not already on onboarding → force onboarding.
+      if (auth.isLoggedIn &&
+          auth.isFirstLogin &&
+          loc != AppRoutes.onboarding) {
+        return AppRoutes.onboarding;
+      }
+
+      // Logged in + onboarding done + still on onboarding page → push to home.
+      if (auth.isLoggedIn &&
+          !auth.isFirstLogin &&
+          loc == AppRoutes.onboarding) {
+        return AppRoutes.home;
+      }
+
       return null;
     },
     routes: [
@@ -48,6 +110,55 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.welcome,
         builder: (_, __) => const WelcomeScreen(),
       ),
+      GoRoute(
+        path: AppRoutes.phoneEntry,
+        builder: (_, __) => const PhoneEntryScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.otp,
+        builder: (context, state) {
+          final phone = state.extra as String? ?? '';
+          return OtpScreen(phoneNumber: phone);
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (_, __) => const OnboardingScreen(),
+      ),
+
+      // ── Tournament full-screen routes (no bottom nav) ──────────────
+      // Define create BEFORE :id so go_router prefers the static segment.
+      GoRoute(
+        path: AppRoutes.tournamentCreate,
+        builder: (_, __) => const CreateTournamentScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes._tournamentDetail,
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return TournamentDetailScreen(tournamentId: id);
+        },
+      ),
+
+      // ── Match detail full-screen route (no bottom nav) ─────────────
+      GoRoute(
+        path: AppRoutes._matchDetail,
+        builder: (context, state) {
+          final matchCtx = state.extra as MatchWithContext;
+          return MatchDetailScreen(matchContext: matchCtx);
+        },
+      ),
+
+      // ── Tournament fixtures full-screen route (no bottom nav) ──────
+      GoRoute(
+        path: AppRoutes._tournamentFixtures,
+        builder: (context, state) {
+          final tournament = state.extra as Tournament;
+          return TournamentFixturesScreen(tournament: tournament);
+        },
+      ),
+
+      // ── Shell (bottom nav) ─────────────────────────────────────────
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
         routes: [
@@ -66,6 +177,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.training,
             builder: (_, __) => const TrainingScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.discover,
+            builder: (_, __) => const PlayerSearchScreen(),
           ),
           GoRoute(
             path: AppRoutes.profile,

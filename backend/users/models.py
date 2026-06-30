@@ -1,13 +1,16 @@
+import sqlalchemy as sa
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ, UUID
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, Text
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.models import TimestampMixin, UUIDPrimaryKeyMixin
 from database import Base
+
+_RELIABILITY_DEFAULT = 5.0
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -15,10 +18,27 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     phone_number: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
 
 
 class PlayerProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """
+    One-to-one with User. Created lazily on first profile update.
+
+    Fields:
+      display_name     – required; used for search and display
+      city             – free-text city string; used for city-based discovery
+      skill_level      – SkillLevel enum value stored as text
+      play_style       – PlayStyle enum value stored as text
+      bio              – free-text self-description
+      latitude         – optional GPS latitude; stored for future radius search
+      longitude        – optional GPS longitude; stored for future radius search
+      reliability_score– 0.0–5.0, default 5.0; degrades on confirmed no-shows
+      rating           – 0.0–10.0, nullable; manually set or computed from results
+    """
+
     __tablename__ = "player_profiles"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -32,3 +52,23 @@ class PlayerProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     skill_level: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     play_style: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Location — optional; used for radius search when GPS is enabled (post-MVP)
+    latitude: Mapped[Optional[float]] = mapped_column(
+        DOUBLE_PRECISION, nullable=True
+    )
+    longitude: Mapped[Optional[float]] = mapped_column(
+        DOUBLE_PRECISION, nullable=True
+    )
+
+    # Scoring
+    reliability_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=_RELIABILITY_DEFAULT
+    )
+    rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Elo system — updated after every completed singles match
+    elo_rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

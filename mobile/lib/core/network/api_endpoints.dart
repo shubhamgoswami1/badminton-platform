@@ -19,8 +19,12 @@ abstract final class ApiEndpoints {
 
   // Tournaments
   static const String tournaments = '/tournaments';
+  static const String tournamentsNearby = '/tournaments/nearby';
+  static const String tournamentsMyHosted = '/tournaments/my-hosted';
+  static const String tournamentsMyJoined = '/tournaments/my-joined';
   static String tournament(String id) => '/tournaments/$id';
   static String tournamentStatus(String id) => '/tournaments/$id/status';
+  static String startTournament(String id) => '/tournaments/$id/start';
   static String participants(String id) => '/tournaments/$id/participants';
   static String participant(String tid, String pid) => '/tournaments/$tid/participants/$pid';
   static String seedOrder(String id) => '/tournaments/$id/participants/seed-order';
@@ -29,8 +33,12 @@ abstract final class ApiEndpoints {
   static String matches(String id) => '/tournaments/$id/matches';
   static String standings(String id) => '/tournaments/$id/standings';
 
-  // Scores
+  // Scores / Match detail
+  static const String myMatches = '/matches/my';
+  static String matchDetail(String matchId) => '/matches/$matchId';
   static String matchScore(String matchId) => '/matches/$matchId/score';
+  static String matchUpdateScore(String matchId) => '/matches/$matchId/update-score';
+  static String matchComplete(String matchId) => '/matches/$matchId/complete';
   static String matchWalkover(String matchId) => '/matches/$matchId/walkover';
 
   // Training

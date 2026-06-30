@@ -59,17 +59,17 @@ class WelcomeScreen extends StatelessWidget {
               const Spacer(flex: 3),
 
               // Feature highlights
-              _FeatureRow(
+              const _FeatureRow(
                 icon: Icons.emoji_events_outlined,
                 text: 'Run knockout & round-robin tournaments',
               ),
               const SizedBox(height: 14),
-              _FeatureRow(
+              const _FeatureRow(
                 icon: Icons.fitness_center_outlined,
                 text: 'Log training sessions and set goals',
               ),
               const SizedBox(height: 14),
-              _FeatureRow(
+              const _FeatureRow(
                 icon: Icons.people_outline,
                 text: 'Discover players and venues near you',
               ),
@@ -78,11 +78,7 @@ class WelcomeScreen extends StatelessWidget {
 
               AppButton(
                 label: 'Continue with Phone',
-                onPressed: () {
-                  // TODO(P1): navigate to phone entry screen
-                  // For now, bypass auth in dev by going straight to home
-                  context.go(AppRoutes.home);
-                },
+                onPressed: () => context.push(AppRoutes.phoneEntry),
                 icon: Icons.phone_android,
               ),
 

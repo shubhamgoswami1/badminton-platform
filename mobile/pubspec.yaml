@@ -33,6 +33,9 @@ dependencies:
   # Connectivity
   connectivity_plus: ^6.0.3
 
+  # Location
+  geolocator: ^13.0.1
+
   # Misc UI
   cupertino_icons: ^1.0.8
 
@@ -47,5 +50,32 @@ dev_dependencies:
   freezed: ^2.5.2
   json_serializable: ^6.8.0
 
+  # App icon + splash screen generation
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
+
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/app_icon.png"
+  min_sdk_android: 21
+  web:
+    generate: false
+  windows:
+    generate: false
+  macos:
+    generate: false
+
+flutter_native_splash:
+  color: "#1B5E20"
+  image: assets/images/app_icon.png
+  android: true
+  ios: true
+  android_12:
+    color: "#1B5E20"
+    icon_background_color: "#1B5E20"

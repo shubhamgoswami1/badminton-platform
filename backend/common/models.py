@@ -1,16 +1,19 @@
 """
-Shared SQLAlchemy column mixins.
+Shared SQLAlchemy column mixins and cross-cutting models.
 
 All domain models inherit from Base (database.py) and optionally from
-these mixins to get UUID primary keys and standard timestamp columns.
+the mixins below to get UUID primary keys and standard timestamp columns.
 """
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ, UUID
+import sqlalchemy as sa
+from sqlalchemy import Index, Integer, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
+from database import Base
 
 
 def _now_utc() -> datetime:
@@ -32,15 +35,43 @@ class TimestampMixin:
     """created_at / updated_at columns, always in UTC."""
 
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ,
+        sa.TIMESTAMP(timezone=True),
         nullable=False,
         default=_now_utc,
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ,
+        sa.TIMESTAMP(timezone=True),
         nullable=False,
         default=_now_utc,
         server_default=func.now(),
         onupdate=_now_utc,
+    )
+
+
+# ── Cross-cutting domain models ───────────────────────────────────────────────
+
+
+class IdempotencyRecord(Base):
+    """
+    Caches score-submission responses keyed by the client's Idempotency-Key
+    header.  Records expire logically after 24 hours; a periodic cleanup job
+    handles physical deletion in production.
+
+    Registered in Base.metadata so conftest.py's create_all() picks it up.
+    """
+
+    __tablename__ = "idempotency_records"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_idempotency_records_created_at", "created_at"),
     )

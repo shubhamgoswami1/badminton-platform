@@ -1,7 +1,9 @@
 """
-Tournament service — covers P3 (CRUD), P4 (participants), P5/P7 (brackets), P6 (score integration).
+Tournament service — covers P3 (CRUD), P4 (participants), P5/P7 (brackets), P6 (score integration),
+and discovery (nearby, my-hosted, my-joined).
 """
 
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -18,13 +20,14 @@ from common.enums import (
 )
 from common.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from common.pagination import PageParams
-from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant
+from tournaments.models import Match, MatchScore, Team, Tournament, TournamentParticipant
 from tournaments.schemas import (
     ParticipantRegisterRequest,
+    TeamCreateRequest,
     TournamentCreate,
     TournamentUpdate,
 )
-from users.models import User
+from users.models import PlayerProfile, User
 
 
 def _now() -> datetime:
@@ -37,11 +40,20 @@ def _now() -> datetime:
 async def create_tournament(
     db: AsyncSession, organiser_id: uuid.UUID, data: TournamentCreate
 ) -> Tournament:
+    # lat/lng must be provided together or not at all
+    has_lat = data.latitude is not None
+    has_lng = data.longitude is not None
+    if has_lat != has_lng:
+        from common.exceptions import ValidationError as VE
+        raise VE("latitude and longitude must be provided together")
+
     t = Tournament(
         organiser_id=organiser_id,
         title=data.title,
         description=data.description,
         city=data.city,
+        latitude=data.latitude,
+        longitude=data.longitude,
         format=data.format.value,
         match_format=data.match_format.value,
         play_type=data.play_type.value,
@@ -238,9 +250,16 @@ async def list_participants(
 async def withdraw_participant(
     db: AsyncSession, tournament_id: uuid.UUID, participant_id: uuid.UUID, user_id: uuid.UUID
 ) -> TournamentParticipant:
+    """
+    Remove a participant from a tournament.
+
+    Permission rules:
+    - A participant may withdraw their own registration at any time before the
+      tournament is IN_PROGRESS or COMPLETED.
+    - The organiser may remove any participant as long as the tournament has not
+      yet started (status not IN_PROGRESS or COMPLETED).
+    """
     t = await get_tournament(db, tournament_id)
-    if t.status in (TournamentStatus.IN_PROGRESS.value, TournamentStatus.COMPLETED.value):
-        raise ConflictError("Cannot withdraw after tournament has started")
 
     result = await db.execute(
         select(TournamentParticipant).where(
@@ -251,8 +270,22 @@ async def withdraw_participant(
     p = result.scalar_one_or_none()
     if p is None:
         raise NotFoundError("Participant not found")
-    if p.user_id != user_id:
+
+    is_self = p.user_id == user_id
+    is_organiser = t.organiser_id == user_id
+
+    if not is_self and not is_organiser:
         raise ForbiddenError("Can only withdraw your own registration")
+
+    already_started = t.status in (
+        TournamentStatus.IN_PROGRESS.value,
+        TournamentStatus.COMPLETED.value,
+    )
+    if already_started:
+        if is_organiser and not is_self:
+            raise ConflictError("Cannot remove a participant after the tournament has started")
+        if is_self:
+            raise ConflictError("Cannot withdraw after tournament has started")
 
     p.status = ParticipantStatus.WITHDRAWN.value
     await db.flush()
@@ -288,7 +321,155 @@ async def set_seed_order(
     return list(participants.values())
 
 
+# ── Tournament start (P4+) ───────────────────────────────────
+
+
+async def start_tournament(
+    db: AsyncSession, tournament_id: uuid.UUID, organiser_id: uuid.UUID
+) -> Tournament:
+    """
+    One-shot "start tournament" action.
+
+    - Organiser only.
+    - Tournament must be in REGISTRATION_OPEN or REGISTRATION_CLOSED.
+    - At least 4 registered participants required.
+    - If still REGISTRATION_OPEN, registration is automatically closed first.
+    - Generates the bracket and transitions status to IN_PROGRESS.
+    """
+    t = await get_tournament(db, tournament_id)
+
+    if t.organiser_id != organiser_id:
+        raise ForbiddenError("Only the organiser can start the tournament")
+
+    allowed_statuses = (
+        TournamentStatus.REGISTRATION_OPEN.value,
+        TournamentStatus.REGISTRATION_CLOSED.value,
+    )
+    if t.status not in allowed_statuses:
+        raise ConflictError(
+            f"Tournament cannot be started from status '{t.status}'. "
+            "It must be in REGISTRATION_OPEN or REGISTRATION_CLOSED."
+        )
+
+    # Count registered participants before any status change.
+    count_result = await db.execute(
+        select(func.count(TournamentParticipant.id)).where(
+            TournamentParticipant.tournament_id == tournament_id,
+            TournamentParticipant.status == ParticipantStatus.REGISTERED.value,
+        )
+    )
+    participant_count = count_result.scalar_one()
+
+    if participant_count < 4:
+        raise ConflictError(
+            f"At least 4 registered participants are required to start the tournament "
+            f"(currently {participant_count})."
+        )
+
+    # Auto-close registration if still open.
+    if t.status == TournamentStatus.REGISTRATION_OPEN.value:
+        t.status = TournamentStatus.REGISTRATION_CLOSED.value
+        await db.flush()
+
+    # Delegate to generate_bracket which handles bracket creation and
+    # the final transition to IN_PROGRESS.
+    await generate_bracket(db, tournament_id, organiser_id)
+
+    return await get_tournament(db, tournament_id)
+
+
+# ── Teams (doubles scaffold) ──────────────────────────────────
+
+
+async def create_team(
+    db: AsyncSession,
+    tournament_id: uuid.UUID,
+    organiser_id: uuid.UUID,
+    data: "TeamCreateRequest",
+) -> Team:
+    """
+    Assign two participants as a doubles team.  Organiser only.
+    The tournament must not yet have started.
+    """
+    t = await get_tournament(db, tournament_id)
+    if t.organiser_id != organiser_id:
+        raise ForbiddenError("Only the organiser can assign teams")
+
+    if t.status in (TournamentStatus.IN_PROGRESS.value, TournamentStatus.COMPLETED.value):
+        raise ConflictError("Cannot assign teams after the tournament has started")
+
+    # Verify participant_a belongs to this tournament.
+    p_a = await db.get(TournamentParticipant, data.participant_a_id)
+    if p_a is None or p_a.tournament_id != tournament_id:
+        raise NotFoundError("Participant A not found in this tournament")
+
+    if data.participant_b_id is not None:
+        p_b = await db.get(TournamentParticipant, data.participant_b_id)
+        if p_b is None or p_b.tournament_id != tournament_id:
+            raise NotFoundError("Participant B not found in this tournament")
+
+    team = Team(
+        tournament_id=tournament_id,
+        name=data.name,
+        participant_a_id=data.participant_a_id,
+        participant_b_id=data.participant_b_id,
+    )
+    db.add(team)
+    await db.flush()
+    return team
+
+
+async def list_teams(db: AsyncSession, tournament_id: uuid.UUID) -> list[Team]:
+    result = await db.execute(
+        select(Team)
+        .where(Team.tournament_id == tournament_id)
+        .order_by(Team.created_at)
+    )
+    return list(result.scalars().all())
+
+
 # ── Bracket generation (P5 / P7) ─────────────────────────────
+
+
+async def _get_seeded_participant_ids(
+    db: AsyncSession,
+    registered: list[TournamentParticipant],
+) -> list[uuid.UUID]:
+    """
+    Return participant UUIDs ordered for bracket seeding.
+
+    Priority:
+      1. Explicit seed_order ASC  (set by the host via PUT /seed-order)
+      2. PlayerProfile.rating DESC  (auto-seeding; higher-rated → better seed)
+      3. registered_at ASC  (stable tiebreaker when ratings are equal / absent)
+
+    Participants without a rating come after rated ones in the auto-seeded
+    block.  Participants with an explicit seed_order always come before
+    unranked ones regardless of rating.
+    """
+    if not registered:
+        return []
+
+    # Fetch ratings in one query (LEFT JOIN equivalent — missing profiles → None)
+    user_ids = [p.user_id for p in registered]
+    rows = await db.execute(
+        select(PlayerProfile.user_id, PlayerProfile.rating).where(
+            PlayerProfile.user_id.in_(user_ids)
+        )
+    )
+    ratings: dict[uuid.UUID, float | None] = {r.user_id: r.rating for r in rows}
+
+    def _key(p: TournamentParticipant) -> tuple:
+        # --- primary: manual seed (lower = earlier; None treated as ∞) ---
+        seed = p.seed_order if p.seed_order is not None else float("inf")
+        # --- secondary: rating DESC (negate so higher rating sorts first;
+        #                None treated as ∞ so unrated go last in the block) ---
+        r = ratings.get(p.user_id)
+        rating_key = -r if r is not None else float("inf")
+        # --- tertiary: registration time (stable, deterministic tiebreak) ---
+        return (seed, rating_key, p.registered_at)
+
+    return [p.id for p in sorted(registered, key=_key)]
 
 
 async def generate_bracket(
@@ -310,14 +491,17 @@ async def generate_bracket(
     if len(registered) < 4:
         raise ConflictError("At least 4 registered participants are required")
 
-    participant_ids = [p.id for p in registered]
+    # Order by explicit seed_order → rating DESC → registered_at (see helper).
+    participant_ids = await _get_seeded_participant_ids(db, registered)
 
     if t.format == TournamentFormat.KNOCKOUT.value:
         matches = generate_knockout_bracket(tournament_id, participant_ids)
     else:
         matches = generate_round_robin_bracket(tournament_id, participant_ids)
 
-    for m in matches:
+    # Insert later rounds first so next_match_id FK references are already
+    # present when earlier-round rows are written.
+    for m in sorted(matches, key=lambda m: -m.round):
         db.add(m)
     await db.flush()
 
@@ -348,6 +532,14 @@ async def get_match(db: AsyncSession, match_id: uuid.UUID) -> Match:
 async def get_round_robin_standings(
     db: AsyncSession, tournament_id: uuid.UUID
 ) -> list[dict]:
+    """
+    Compute round-robin standings.
+
+    Sort order (all descending):
+      1. points      (2 per win, 0 per loss)
+      2. point_diff  (cumulative set-score differential)
+      3. wins        (secondary guard for equal point_diff)
+    """
     t = await get_tournament(db, tournament_id)
     if t.format != TournamentFormat.ROUND_ROBIN.value:
         raise ConflictError("Standings are only available for round robin tournaments")
@@ -356,29 +548,213 @@ async def get_round_robin_standings(
     participants = await list_participants(db, tournament_id)
 
     stats: dict[uuid.UUID, dict] = {
-        p.id: {"participant_id": p.id, "user_id": p.user_id,
-               "matches_played": 0, "wins": 0, "losses": 0, "points": 0}
+        p.id: {
+            "participant_id": p.id,
+            "user_id": p.user_id,
+            "matches_played": 0,
+            "wins": 0,
+            "losses": 0,
+            "points": 0,
+            "point_diff": 0,
+        }
         for p in participants if p.status == ParticipantStatus.REGISTERED.value
     }
 
-    for m in matches:
-        if m.status != MatchStatus.COMPLETED.value and m.status != MatchStatus.WALKOVER.value:
-            continue
+    finished_statuses = {MatchStatus.COMPLETED.value, MatchStatus.WALKOVER.value}
+    finished_matches = [m for m in matches if m.status in finished_statuses]
+
+    # ── Win / loss / points ─────────────────────────────────────────────────
+    for m in finished_matches:
         if m.side_a_participant_id and m.side_a_participant_id in stats:
             stats[m.side_a_participant_id]["matches_played"] += 1
         if m.side_b_participant_id and m.side_b_participant_id in stats:
             stats[m.side_b_participant_id]["matches_played"] += 1
 
-        if m.winner_participant_id and m.winner_participant_id in stats:
-            stats[m.winner_participant_id]["wins"] += 1
-            stats[m.winner_participant_id]["points"] += 2
-            # loser
-            loser_id = (
-                m.side_b_participant_id
-                if m.winner_participant_id == m.side_a_participant_id
-                else m.side_a_participant_id
-            )
-            if loser_id and loser_id in stats:
-                stats[loser_id]["losses"] += 1
+        if not m.winner_participant_id:
+            continue
 
-    return sorted(stats.values(), key=lambda x: x["points"], reverse=True)
+        winner_id = m.winner_participant_id
+        loser_id = (
+            m.side_b_participant_id
+            if winner_id == m.side_a_participant_id
+            else m.side_a_participant_id
+        )
+
+        if winner_id in stats:
+            stats[winner_id]["wins"] += 1
+            stats[winner_id]["points"] += 2
+        if loser_id and loser_id in stats:
+            stats[loser_id]["losses"] += 1
+
+    # ── Point differential (requires set-score rows) ────────────────────────
+    if finished_matches:
+        finished_ids = [m.id for m in finished_matches]
+        score_result = await db.execute(
+            select(MatchScore).where(MatchScore.match_id.in_(finished_ids))
+        )
+        score_rows = score_result.scalars().all()
+
+        # Build match_id → (side_a_pid, side_b_pid) lookup.
+        sides_map: dict[uuid.UUID, tuple] = {
+            m.id: (m.side_a_participant_id, m.side_b_participant_id)
+            for m in finished_matches
+        }
+
+        for s in score_rows:
+            pair = sides_map.get(s.match_id)
+            if not pair:
+                continue
+            pid_a, pid_b = pair
+            if pid_a and pid_a in stats:
+                stats[pid_a]["point_diff"] += s.side_a_score - s.side_b_score
+            if pid_b and pid_b in stats:
+                stats[pid_b]["point_diff"] += s.side_b_score - s.side_a_score
+
+    return sorted(
+        stats.values(),
+        key=lambda x: (x["points"], x["point_diff"], x["wins"]),
+        reverse=True,
+    )
+
+
+# ── Discovery (nearby / my-hosted / my-joined) ────────────────────────────
+
+
+# Statuses considered "upcoming" (not yet finished or cancelled).
+_UPCOMING_STATUSES = frozenset([
+    TournamentStatus.DRAFT.value,
+    TournamentStatus.REGISTRATION_OPEN.value,
+    TournamentStatus.REGISTRATION_CLOSED.value,
+    TournamentStatus.IN_PROGRESS.value,
+])
+
+
+async def get_my_hosted_tournaments(
+    db: AsyncSession,
+    organiser_id: uuid.UUID,
+    params: "PageParams",
+) -> tuple[list[Tournament], int]:
+    """Return tournaments created by organiser_id (non-deleted), newest first."""
+    q = (
+        select(Tournament)
+        .where(Tournament.organiser_id == organiser_id, Tournament.deleted_at.is_(None))
+    )
+    count_q = select(func.count()).select_from(q.subquery())
+    total: int = (await db.execute(count_q)).scalar_one()
+
+    q = q.order_by(Tournament.created_at.desc()).offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
+
+
+async def get_my_joined_tournaments(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    params: "PageParams",
+) -> tuple[list[Tournament], int]:
+    """Return non-deleted tournaments where user_id has a REGISTERED participant row."""
+    q = (
+        select(Tournament)
+        .join(
+            TournamentParticipant,
+            TournamentParticipant.tournament_id == Tournament.id,
+        )
+        .where(
+            TournamentParticipant.user_id == user_id,
+            TournamentParticipant.status == ParticipantStatus.REGISTERED.value,
+            Tournament.deleted_at.is_(None),
+        )
+    )
+    count_q = select(func.count()).select_from(q.subquery())
+    total: int = (await db.execute(count_q)).scalar_one()
+
+    q = q.order_by(Tournament.starts_at.asc().nulls_last(), Tournament.created_at.desc())
+    q = q.offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
+
+
+async def get_nearby_tournaments(
+    db: AsyncSession,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    params: "PageParams",
+    status_filter: str | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Return upcoming non-deleted tournaments within radius_km of (lat, lng).
+
+    Uses a bounding-box pre-filter (same approach as player search) for the DB
+    query, then computes exact haversine distance in Python and attaches it as
+    `distance_km`.  Only tournaments with GPS coords are returned.
+
+    Results are ordered by distance ASC.
+    """
+    lat_delta, lng_delta = _bounding_box_deltas(lat, radius_km)
+
+    # Base query: only tournaments with GPS coords, not deleted, upcoming
+    q = select(Tournament).where(
+        Tournament.deleted_at.is_(None),
+        Tournament.latitude.is_not(None),
+        Tournament.latitude.between(lat - lat_delta, lat + lat_delta),
+        Tournament.longitude.is_not(None),
+        Tournament.longitude.between(lng - lng_delta, lng + lng_delta),
+        Tournament.status.in_(list(_UPCOMING_STATUSES)),
+    )
+    if status_filter:
+        q = q.where(Tournament.status == status_filter)
+
+    all_in_box = list((await db.execute(q)).scalars().all())
+
+    # Exact haversine filter + distance annotation
+    rows: list[tuple[Tournament, float]] = []
+    for t in all_in_box:
+        d = _haversine_km(lat, lng, t.latitude, t.longitude)  # type: ignore[arg-type]
+        if d <= radius_km:
+            rows.append((t, d))
+
+    # Sort by distance
+    rows.sort(key=lambda x: x[1])
+
+    total = len(rows)
+
+    # Paginate in-memory (result set is bounded by bounding box → manageable)
+    page_rows = rows[params.offset: params.offset + params.limit]
+
+    result = []
+    for t, dist in page_rows:
+        d = t.__dict__.copy()
+        d.pop("_sa_instance_state", None)
+        d["distance_km"] = round(dist, 2)
+        result.append(d)
+
+    return result, total
+
+
+# ── Geo helpers ───────────────────────────────────────────────────────────
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return the great-circle distance in kilometres between two GPS points."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _bounding_box_deltas(lat: float, radius_km: float) -> tuple[float, float]:
+    """
+    Return (lat_delta_deg, lng_delta_deg) for a bounding box of radius_km.
+    Uses the same small-angle approximation as the player search.
+    """
+    lat_delta = radius_km / 111.0
+    cos_lat = math.cos(math.radians(lat))
+    lng_delta = radius_km / (111.0 * cos_lat) if cos_lat > 1e-6 else 180.0
+    return lat_delta, lng_delta
+
+
+# Forward reference needed for PageParams type hint (avoids circular import)
+from common.pagination import PageParams  # noqa: E402

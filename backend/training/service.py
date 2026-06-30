@@ -25,6 +25,7 @@ async def create_log(db: AsyncSession, user_id: uuid.UUID, data: TrainingLogCrea
         user_id=user_id,
         session_type=data.session_type.value,
         duration_minutes=data.duration_minutes,
+        intensity=data.intensity.value if data.intensity else None,
         notes=data.notes,
         logged_at=data.logged_at or _now(),
     )
@@ -62,6 +63,8 @@ async def update_log(
         log.session_type = data.session_type.value
     if data.duration_minutes is not None:
         log.duration_minutes = data.duration_minutes
+    if data.intensity is not None:
+        log.intensity = data.intensity.value
     if data.notes is not None:
         log.notes = data.notes
     if data.logged_at is not None:
@@ -74,6 +77,18 @@ async def delete_log(db: AsyncSession, log_id: uuid.UUID, user_id: uuid.UUID) ->
     log = await get_log(db, log_id, user_id)
     await db.delete(log)
     await db.flush()
+
+
+async def list_player_logs(
+    db: AsyncSession, player_user_id: uuid.UUID, params: PageParams
+) -> tuple[list[TrainingLog], int]:
+    """Return training logs for any player (public endpoint, auth required)."""
+    from sqlalchemy import func
+    q = select(TrainingLog).where(TrainingLog.user_id == player_user_id)
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    q = q.order_by(TrainingLog.logged_at.desc()).offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
 
 
 # ── Training Goals ────────────────────────────────────────────
@@ -127,6 +142,18 @@ async def update_goal(
             goal.completed_at = _now()
     await db.flush()
     return goal
+
+
+async def list_player_goals(
+    db: AsyncSession, player_user_id: uuid.UUID, params: PageParams
+) -> tuple[list[TrainingGoal], int]:
+    """Return training goals for any player (public endpoint, auth required)."""
+    from sqlalchemy import func
+    q = select(TrainingGoal).where(TrainingGoal.user_id == player_user_id)
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    q = q.order_by(TrainingGoal.created_at.desc()).offset(params.offset).limit(params.limit)
+    result = await db.execute(q)
+    return list(result.scalars().all()), total
 
 
 async def delete_goal(db: AsyncSession, goal_id: uuid.UUID, user_id: uuid.UUID) -> None:
