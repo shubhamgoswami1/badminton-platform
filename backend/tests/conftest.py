@@ -7,8 +7,6 @@ Assumptions:
   default DATABASE_URL with the database name suffixed by "_test".
 - The engine is created inside a session-scoped async fixture so that asyncpg
   connections are always bound to the single session event loop.
-  (Module-level engine creation caused "Future attached to a different loop"
-  errors because asyncpg bound connections to the import-time loop.)
 - Each test function gets a clean DB session that is rolled back after the test,
   providing isolation without needing to truncate tables between tests.
 
@@ -28,19 +26,21 @@ from database import Base, get_db
 from main import app
 
 # Import all models so Base.metadata knows about them
-from auth.models import OtpVerification, RefreshToken  # noqa: F401
-from users.models import PlayerProfile, User  # noqa: F401
-from tournaments.models import Match, MatchScore, Tournament, TournamentParticipant  # noqa: F401
-from training.models import TrainingGoal, TrainingLog  # noqa: F401
-from discovery.models import Venue  # noqa: F401
 from admin.models import AdminLog  # noqa: F401
+from auth.models import OtpVerification, RefreshToken  # noqa: F401
 from common.models import IdempotencyRecord  # noqa: F401
+from discovery.models import Venue  # noqa: F401
+from tournaments.models import Match, MatchScore, Team, Tournament, TournamentParticipant  # noqa: F401
+from training.models import TrainingGoal, TrainingLog  # noqa: F401
+from users.models import PlayerProfile, User  # noqa: F401
 
 settings = get_settings()
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    settings.database_url.replace("/badminton", "/badminton_test"),
+    # rsplit so only the database-name segment (last /badminton) is replaced,
+    # not the username segment (://badminton:) which shares the same substring.
+    settings.database_url.rsplit("/", 1)[0] + "/badminton_test",
 )
 
 
